@@ -4,7 +4,7 @@
 use claude_harness_process::*;
 use flow::FlowId;
 use harness::{Event, Flow, SessionId, State};
-use process::{Arrival, Gave, Given, Identity, Living, Path, ProcessManager, Root, Roots, Trace, Traced, Tracing};
+use process::{Answer, Arrival, Caller, Gave, Given, Identity, Living, Path, ProcessId, ProcessManager, Root, Roots, Trace, Traced, Tracing, UserId};
 
 #[derive(Default)]
 struct World(Vec<Traced<Process>>);

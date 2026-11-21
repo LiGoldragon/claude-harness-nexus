@@ -4,7 +4,7 @@ use claude_harness_process::*;
 use harness::{Event, Flow, FilePath, Identifiable, Observable, Observed, SessionId, State, Tokens, Transitionable};
 
 fn start(source: Source) -> Hook {
-    Hook::SessionStart(SessionStart {
+    Hook::SessionStart(SessionStart_Data {
         session_id: SessionId("15c0ce0b-1d0c-4c58-9a57-3f1c8f1e15c0".into()),
         file_path: FilePath("/tmp/transcript.jsonl".into()),
         source,

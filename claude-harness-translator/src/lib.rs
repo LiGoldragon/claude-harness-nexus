@@ -10,6 +10,7 @@ use std::os::unix::net::UnixStream;
 use std::process::ExitCode;
 
 use claude_harness_process::*;
+use process::{Caller, ProcessId, UserId};
 use harness::{BackgroundWork, Compaction, Description, EndReason, FilePath, Response, SessionId, Tokens, Trigger, WorkId, WorkKind};
 use rustix::event::{PollFd, PollFlags};
 use rustix::fs::inotify;
@@ -49,7 +50,7 @@ impl Translatable for Hook {
         let value: Value = serde_json::from_str(payload).map_err(|_| Untranslated::Unreadable)?;
         let session = || text(&value, "session_id").map(SessionId);
         Ok(match text(&value, "hook_event_name")?.as_str() {
-            "SessionStart" => Hook::SessionStart(SessionStart {
+            "SessionStart" => Hook::SessionStart(SessionStart_Data {
                 session_id: session()?,
                 file_path: FilePath(text(&value, "transcript_path")?),
                 source: match text(&value, "source").ok().as_deref() {
@@ -61,7 +62,7 @@ impl Translatable for Hook {
             "UserPromptSubmit" => Hook::UserPromptSubmit(session()?),
             "PermissionRequest" => Hook::PermissionRequest(session()?),
             "PostToolUse" => Hook::PostToolUse(session()?),
-            "Stop" => Hook::Stop(Stop {
+            "Stop" => Hook::Stop(Stop_Data {
                 session_id: session()?,
                 response_option: text(&value, "last_assistant_message").ok().map(Response),
                 background_work_vector: value
@@ -75,7 +76,7 @@ impl Translatable for Hook {
                     })
                     .unwrap_or_default(),
             }),
-            "SessionEnd" => Hook::SessionEnd(SessionEnd {
+            "SessionEnd" => Hook::SessionEnd(SessionEnd_Data {
                 session_id: session()?,
                 end_reason: match text(&value, "reason")?.as_str() {
                     "clear" => EndReason::Cleared,
@@ -139,10 +140,10 @@ impl Translatable for Row {
 }
 
 /// Reads the whole lines after the offset, at most the row count of them.
-fn rows_after(path: &str, offset: &Offset, row_count: &RowCount) -> io::Result<Following> {
+fn rows_after(path: &str, offset: &Offset, row_count: &RowCount) -> io::Result<Following_Data> {
     let mut file = BufReader::new(File::open(path)?);
     file.seek(SeekFrom::Start(offset.0.max(0) as u64))?;
-    let mut rows = Following { row_vector: Vec::new(), offset: offset.clone() };
+    let mut rows = Following_Data { row_vector: Vec::new(), offset: *offset };
     let mut line = Vec::new();
     while (rows.row_vector.len() as i64) < row_count.0 {
         line.clear();
@@ -160,7 +161,7 @@ fn rows_after(path: &str, offset: &Offset, row_count: &RowCount) -> io::Result<F
 /// Nexus closes the connection. A transcript not yet written is waited for:
 /// its nearest existing ancestor is watched until each missing part appears.
 /// A path with no ancestor at all ends the connection, and the emission is Unanswered.
-pub fn follow(mut stream: UnixStream, follow: Follow) -> io::Result<()> {
+pub fn follow(mut stream: UnixStream, follow: Follow_Data) -> io::Result<()> {
     let path = std::path::PathBuf::from(&follow.file_path.0);
     let watching = inotify::init(inotify::CreateFlags::CLOEXEC)?;
     let mut appearing: Option<(std::path::PathBuf, i32)> = None;
@@ -190,11 +191,11 @@ pub fn follow(mut stream: UnixStream, follow: Follow) -> io::Result<()> {
         }
         if followed {
             let offset = match &read_from {
-                ReadFrom::Offset(offset) => offset.clone(),
+                ReadFrom::Offset(offset) => *offset,
                 ReadFrom::FileEnd => Offset(std::fs::metadata(&path)?.len().try_into().unwrap_or(i64::MAX)),
             };
             let rows = rows_after(&follow.file_path.0, &offset, &follow.row_count)?;
-            read_from = ReadFrom::Offset(rows.offset.clone());
+            read_from = ReadFrom::Offset(rows.offset);
             let full = rows.row_vector.len() as i64 >= follow.row_count.0;
             if !rows.row_vector.is_empty() {
                 rows.write_to(&mut stream)?;
@@ -221,7 +222,7 @@ pub fn itself() -> io::Result<Caller> {
 
 /// Writes the settings a session is started with, beside the sockets: the hook
 /// client run at each named hook. The file is written whole, then moved into place.
-pub fn install(place: &Place, install: &Install) -> Installation {
+pub fn install(place: &Place, install: &Install_Data) -> Installation_Data {
     let command = serde_json::json!([{ "hooks": [{ "type": "command", "command": install.hook_client.0 }] }]);
     let hooks: serde_json::Map<String, Value> = install.hooks.0.iter().map(|hook_name| (hook_name.0.clone(), command.clone())).collect();
     let settings = serde_json::json!({ "hooks": hooks });
@@ -229,8 +230,8 @@ pub fn install(place: &Place, install: &Install) -> Installation {
     let temporary = path.with_extension("next");
     let written = std::fs::write(&temporary, settings.to_string()).and_then(|()| std::fs::rename(&temporary, &path));
     match written {
-        Ok(()) => Installation::Installed(FilePath(path.to_string_lossy().into_owned())),
-        Err(error) => Installation::Uninstalled(error.raw_os_error().unwrap_or(1).into()),
+        Ok(()) => Installation_Data::Installed(FilePath(path.to_string_lossy().into_owned())),
+        Err(error) => Installation_Data::Uninstalled(error.raw_os_error().unwrap_or(1).into()),
     }
 }
 

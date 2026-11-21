@@ -66,7 +66,7 @@ dependencies = [
 
 [[package]]
 name = "claude-harness-process"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "datom-codec",
  "flow-ethos",
@@ -291,8 +291,8 @@ dependencies = [
 
 [[package]]
 name = "process-library"
-version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/process-library?rev=d797e2139e3af50c53b029cc3b8626f55220b56a#d797e2139e3af50c53b029cc3b8626f55220b56a"
+version = "0.2.0"
+source = "git+https://github.com/LiGoldragon/process-library?rev=63bca61d040830d2c409c91a3a93a4bd934c75ff#63bca61d040830d2c409c91a3a93a4bd934c75ff"
 dependencies = [
  "datom-codec",
  "rkyv",

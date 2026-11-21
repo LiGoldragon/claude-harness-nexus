@@ -1,11 +1,14 @@
 Memory
-[ harness:[ FilePath Observed ]
+[ harness:[ Event FilePath Observed ]
   flow:[ FlowId ]
-  claude_harness:[ ReadFrom RowCount ]
-  claude_harness:meta:[ Hooks HookClient ] ]
+  claude_harness:[ Offset ReadFrom ]
+  claude_harness:processes:[ Changed ]
+  claude_harness:meta:[ Set ] ]
 [ Watch.{ FlowId FilePath ReadFrom }
-  Remembered.{ Vector<Observed>
-               Vector<Watch>
-               Hooks
-               Option<HookClient>
-               Option<RowCount> } ]
+  Observed
+  Keep.Set ]
+[ Observe.{ FlowId Vector<Event> Option<Offset> }
+  Recall.{} ]
+[ Observation.Vector<Changed>
+  Recollection.Vector<Observed> ]
+[]

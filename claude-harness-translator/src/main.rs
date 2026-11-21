@@ -9,6 +9,7 @@ use std::process::ExitCode;
 use std::thread;
 
 use claude_harness_process::*;
+use process::Caller;
 use claude_harness_translator::{Translatable, caller, follow, install, itself};
 use datom_codec::Datomizable;
 use protos::{Protosizable, Textualizable};
@@ -155,7 +156,7 @@ fn main() -> ExitCode {
         serve_text::<signal_claude_prepare::Input, signal_claude_prepare::Input, signal_claude_prepare::Output>(text, place, Placed::PrepareSocket, |_, input| input)
     });
     serve_texts(meta_texts, &place, |text, place| {
-        serve_text::<MetaInput, MetaCall, MetaOutput>(text, place, Placed::MetaSocket, |caller, meta_input| MetaCall { caller, meta_input })
+        serve_text::<meta::Input, MetaCall, meta::Output>(text, place, Placed::MetaSocket, |caller, meta_input| MetaCall { caller, meta_input })
     });
     for stream in hooks.incoming().flatten() {
         report(stream, &place);

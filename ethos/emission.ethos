@@ -1,4 +1,4 @@
-Signal
+Emission
 [ harness:[ FilePath Tokens Compaction ]
   claude_harness:[ Offset ReadFrom RowCount ]
   claude_harness:meta:[ Hooks HookClient ] ]
