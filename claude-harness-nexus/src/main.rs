@@ -12,8 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use claude_harness_process::*;
-use flow::FlowId;
-use harness::{Event, Observed, State, Tokens, Transitionable};
+use harness::{Event, Observed, SessionId, State, Tokens, Transitionable};
 use process::{Answer, Arrival, Caller, Ended, Gave, Given, Identity, Living, Moment, Ownable, Owner, ProcessId, ProcessManager, Roots, Trace, Traced, Tracing, Unobserved, Unremembered, UserId};
 use transport::{Framed, Place, Placed};
 
@@ -69,14 +68,14 @@ impl MemoryProcess {
         }
     }
 
-    fn holds_watch(&self, flow_id: &FlowId) -> bool {
-        self.records.watch_vector.iter().any(|watch| watch.flow_id == *flow_id)
+    fn holds_watch(&self, session_id: &SessionId) -> bool {
+        self.records.watch_vector.iter().any(|watch| watch.session_id == *session_id)
     }
 
     /// A Watch's process, when the row count it is born with is configured.
     fn process_of(&self, watch: &Watch) -> Option<Process> {
         let row_count = self.records.row_count_option?;
-        Some(Process::Watch(WatchProcess { flow_id: watch.flow_id.clone(), file_path: watch.file_path.clone(), read_from: watch.read_from.clone(), row_count }))
+        Some(Process::Watch(WatchProcess { session_id: watch.session_id.clone(), file_path: watch.file_path.clone(), read_from: watch.read_from.clone(), row_count }))
     }
 
     /// A Watch of the same flow and file is kept as it is, with the offset read so far.
@@ -86,10 +85,10 @@ impl MemoryProcess {
     }
 
     fn watch(&mut self, watch: Watch) -> Answer {
-        if self.records.watch_vector.iter().any(|held| held.flow_id == watch.flow_id && held.file_path == watch.file_path) {
+        if self.records.watch_vector.iter().any(|held| held.session_id == watch.session_id && held.file_path == watch.file_path) {
             return Answer::Succeeded;
         }
-        self.records.watch_vector.retain(|held| held.flow_id != watch.flow_id);
+        self.records.watch_vector.retain(|held| held.session_id != watch.session_id);
         self.records.watch_vector.push(watch);
         self.keep()
     }
@@ -108,13 +107,13 @@ impl MemoryProcess {
     /// only while its Watch is kept. A session that has ended is forgotten, its
     /// Observed and its Watch, once its changes are answered.
     fn observe(&mut self, observe: Observe) -> Result<Observation, Unremembered> {
-        if observe.offset_option.is_some() && !self.holds_watch(&observe.flow_id) {
+        if observe.offset_option.is_some() && !self.holds_watch(&observe.session_id) {
             return Ok(Observation(Vec::new()));
         }
-        let position = match self.records.observed_vector.iter().position(|observed| observed.flow_id == observe.flow_id) {
+        let position = match self.records.observed_vector.iter().position(|observed| observed.session_id == observe.session_id) {
             Some(position) => position,
             None => {
-                self.records.observed_vector.push(Observed { flow_id: observe.flow_id.clone(), state: State::Dry, tokens: Tokens(0), background_work_vector: vec![] });
+                self.records.observed_vector.push(Observed { session_id: observe.session_id.clone(), state: State::Dry, tokens: Tokens(0), background_work_vector: vec![], prompt_option: None });
                 self.records.observed_vector.len() - 1
             }
         };
@@ -123,17 +122,22 @@ impl MemoryProcess {
             .event_vector
             .into_iter()
             .filter_map(|event| {
+                if let Event::PromptSubmitted(prompt) = &event
+                    && observed.prompt_option.as_ref().is_some_and(|seen| seen.prompt_id == prompt.prompt_id)
+                {
+                    return None;
+                }
                 let before = observed.state.clone();
                 observed.after(event.clone());
-                let witnessed = matches!(event, Event::PromptSubmitted | Event::TurnEnded) && observed.state == before;
-                (!witnessed).then(|| Changed { flow_id: observe.flow_id.clone(), event, state: observed.state.clone() })
+                let witnessed = matches!(event, Event::TurnEnded) && observed.state == before;
+                (!witnessed).then(|| Changed { session_id: observe.session_id.clone(), event, state: observed.state.clone() })
             })
             .collect();
         if observed.state == State::Ended {
             self.records.observed_vector.remove(position);
-            self.records.watch_vector.retain(|watch| watch.flow_id != observe.flow_id);
+            self.records.watch_vector.retain(|watch| watch.session_id != observe.session_id);
         } else if let Some(offset) = observe.offset_option {
-            for watch in self.records.watch_vector.iter_mut().filter(|watch| watch.flow_id == observe.flow_id) {
+            for watch in self.records.watch_vector.iter_mut().filter(|watch| watch.session_id == observe.session_id) {
                 watch.read_from = ReadFrom::Offset(offset);
             }
         }
@@ -213,7 +217,7 @@ impl SignalProcess {
     fn start(place: &Place, roots: Arc<Roots>, queue: Queue) -> std::io::Result<SignalProcess> {
         let arrived = Arc::new(Mutex::new(BTreeMap::new()));
         SignalProcess::listen(place, Placed::NexusSocket, roots.clone(), arrived.clone(), queue.clone(), |call: Call, _| match call.input {
-            Input::Report(hook) => Called::Born(Process::Report(ReportProcess { caller: call.caller, hook })),
+            Input::Report(Report_Data { session_id, hook }) => Called::Born(Process::Report(ReportProcess { caller: call.caller, session_id, hook })),
             Input::Listening => Called::Listening,
         })?;
         SignalProcess::listen(place, Placed::SubscriptionSocket, roots.clone(), arrived.clone(), queue.clone(), |input: signal_harness::Input, caller| match input {
@@ -365,7 +369,7 @@ struct World {
     queue: Queue,
     roots: Arc<Roots>,
     /// Each Watch that has a living process, or one on its way to birth, by its flow.
-    watching: BTreeMap<FlowId, Identity>,
+    watching: BTreeMap<SessionId, Identity>,
 }
 
 impl World {
@@ -386,13 +390,13 @@ impl World {
             .records
             .watch_vector
             .iter()
-            .filter(|watch| !self.watching.contains_key(&watch.flow_id))
+            .filter(|watch| !self.watching.contains_key(&watch.session_id))
             .filter_map(|watch| self.memory.process_of(watch))
             .collect();
         for process in unborn {
             let identity = self.roots.draw();
             if let Process::Watch(watch) = &process {
-                self.watching.insert(watch.flow_id.clone(), identity.clone());
+                self.watching.insert(watch.session_id.clone(), identity.clone());
             }
             let _ = self.queue.send(Arrived::Arrival(Arrival::Born(Living { identity, process })));
         }
@@ -400,7 +404,7 @@ impl World {
 
     /// A Watch forgotten ends its process.
     fn forget(&mut self) {
-        let forgotten: Vec<Identity> = self.watching.iter().filter(|(flow_id, _)| !self.memory.holds_watch(flow_id)).map(|(_, identity)| identity.clone()).collect();
+        let forgotten: Vec<Identity> = self.watching.iter().filter(|(session_id, _)| !self.memory.holds_watch(session_id)).map(|(_, identity)| identity.clone()).collect();
         for identity in forgotten {
             self.end(identity, Outcome::Watch(Watching::Forgotten));
         }
@@ -409,7 +413,7 @@ impl World {
     fn born(&mut self, living: &Living<Process>) {
         self.signal.bind(living);
         if let Process::Watch(watch) = &living.process
-            && !self.memory.holds_watch(&watch.flow_id)
+            && !self.memory.holds_watch(&watch.session_id)
         {
             self.end(living.identity.clone(), Outcome::Watch(Watching::Forgotten));
         }
@@ -419,7 +423,7 @@ impl World {
         match gift {
             Gift::Reported => self.signal.answer(&identity, &Output::Reported),
             Gift::Subscribed(Subscribed(observed_vector)) => self.signal.subscribed(&identity, signal_harness::Output::Subscribed(observed_vector)),
-            Gift::Changed(Changed { flow_id, event, state }) => self.signal.publish(signal_harness::Output::Changed(signal_harness::Changed { flow_id, event, state })),
+            Gift::Changed(Changed { session_id, event, state }) => self.signal.publish(signal_harness::Output::Changed(signal_harness::Changed { session_id, event, state })),
             Gift::Prepared(Prepared(file_path_option)) => self.signal.answer(&identity, &signal_claude_prepare::Output::Prepared(file_path_option)),
             Gift::Install(install) => self.emission.install(identity, install, self.queue.clone()),
             Gift::Configured(Configured(set)) => self.signal.answer(&identity, &meta::Output::Configured(set)),

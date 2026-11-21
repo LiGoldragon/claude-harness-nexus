@@ -60,20 +60,8 @@ pub struct MetaCall {
 use alloc::vec;
 use alloc::vec::Vec;
 
-use flow::FlowId;
-use harness::{Event, Identifiable, Observable};
+use harness::{Event, Observable};
 use process::{Answer, Caller, Giving, Processable, Unremembered};
-
-impl Identifiable for Hook {
-    fn identify(&self) -> FlowId {
-        match self {
-            Hook::SessionStart(start) => start.session_id.identify(),
-            Hook::UserPromptSubmit(session) | Hook::PermissionRequest(session) | Hook::PostToolUse(session) => session.identify(),
-            Hook::Stop(stop) => stop.session_id.identify(),
-            Hook::SessionEnd(end) => end.session_id.identify(),
-        }
-    }
-}
 
 impl Observable for Hook {
     fn events(&self) -> Vec<Event> {
@@ -84,16 +72,16 @@ impl Observable for Hook {
                 Source::Resume(tokens) => core::iter::once(Event::Resumed).chain(tokens.iter().copied().map(Event::ContextSize)).collect(),
                 Source::Compact => vec![],
             },
-            Hook::UserPromptSubmit(_) => vec![Event::PromptSubmitted],
-            Hook::PermissionRequest(_) => vec![Event::PermissionAsked],
-            Hook::PostToolUse(_) => vec![Event::ToolUsed],
+            Hook::UserPromptSubmit(prompt) => vec![Event::PromptSubmitted(prompt.clone())],
+            Hook::PermissionRequest => vec![Event::PermissionAsked],
+            Hook::PostToolUse => vec![Event::ToolUsed],
             Hook::Stop(stop) => {
                 let mut events: Vec<Event> = stop.response_option.iter().cloned().map(Event::Responded).collect();
                 events.push(Event::InFlight(stop.background_work_vector.clone()));
                 events.push(Event::TurnEnded);
                 events
             }
-            Hook::SessionEnd(end) => vec![Event::Ended(end.end_reason.clone())],
+            Hook::SessionEnd(reason) => vec![Event::Ended(reason.clone())],
         }
     }
 }
@@ -102,12 +90,12 @@ impl Observable for Row {
     fn events(&self) -> Vec<Event> {
         match self {
             Row::Assistant(tokens) => vec![Event::ContextSize(*tokens)],
-            Row::TurnStarted => vec![Event::PromptSubmitted],
+            Row::TurnStarted(prompt) => vec![Event::PromptSubmitted(prompt.clone())],
             Row::TurnEnded => vec![Event::TurnEnded],
             Row::Interrupted => vec![Event::Interrupted],
             Row::Compacted(boundary) => {
                 let mut events = vec![Event::Compacted(boundary.compaction.clone())];
-                events.extend(boundary.tokens_option.clone().map(Event::ContextSize));
+                events.extend(boundary.tokens_option.map(Event::ContextSize));
                 events
             }
             Row::Other => vec![],
@@ -128,9 +116,9 @@ impl Processable for ReportProcess {
                 Source::Startup => ReadFrom::Offset(Offset(0)),
                 Source::Resume(_) | Source::Compact => ReadFrom::FileEnd,
             };
-            manager.give(Watch { flow_id: start.session_id.identify(), file_path: start.file_path.clone(), read_from });
+            manager.give(Watch { session_id: self.session_id.clone(), file_path: start.file_path.clone(), read_from });
         }
-        manager.give(Observe { flow_id: self.hook.identify(), event_vector: self.hook.events(), offset_option: None });
+        manager.give(Observe { session_id: self.session_id.clone(), event_vector: self.hook.events(), offset_option: None });
         None
     }
 
@@ -164,7 +152,7 @@ impl Processable for WatchProcess {
             WatchTaken::Following(Ok(following)) => {
                 self.read_from = ReadFrom::Offset(following.offset);
                 let event_vector = following.row_vector.iter().flat_map(Observable::events).collect();
-                manager.give(Observe { flow_id: self.flow_id.clone(), event_vector, offset_option: Some(following.offset) });
+                manager.give(Observe { session_id: self.session_id.clone(), event_vector, offset_option: Some(following.offset) });
                 None
             }
             WatchTaken::Following(Err(_)) => Some(Watching::Unfollowed),

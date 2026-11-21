@@ -19,7 +19,7 @@ pub struct Compacted_Data {
 #[cfg_attr(feature = "datom", derive(datom_codec::Datomizable, datom_codec::Composing))]
 pub enum Row {
     Assistant(harness::Tokens),
-    TurnStarted,
+    TurnStarted(harness::Prompt),
     TurnEnded,
     Interrupted,
     Compacted(Compacted_Data),

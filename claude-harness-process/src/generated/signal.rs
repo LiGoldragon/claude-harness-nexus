@@ -19,7 +19,6 @@ pub enum Source {
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "datom", derive(datom_codec::Datomizable, datom_codec::Composing))]
 pub struct SessionStart_Data {
-    pub session_id: harness::SessionId,
     pub file_path: harness::FilePath,
     pub source: Source,
 }
@@ -27,33 +26,32 @@ pub struct SessionStart_Data {
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "datom", derive(datom_codec::Datomizable, datom_codec::Composing))]
 pub struct Stop_Data {
-    pub session_id: harness::SessionId,
     pub response_option: core::option::Option<harness::Response>,
     pub background_work_vector: alloc::vec::Vec<harness::BackgroundWork>,
 }
 #[rustfmt::skip]
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "datom", derive(datom_codec::Datomizable, datom_codec::Composing))]
-pub struct SessionEnd_Data {
-    pub session_id: harness::SessionId,
-    pub end_reason: harness::EndReason,
+pub enum Hook {
+    SessionStart(SessionStart_Data),
+    UserPromptSubmit(harness::Prompt),
+    PermissionRequest,
+    PostToolUse,
+    Stop(Stop_Data),
+    SessionEnd(harness::EndReason),
 }
 #[rustfmt::skip]
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "datom", derive(datom_codec::Datomizable, datom_codec::Composing))]
-pub enum Hook {
-    SessionStart(SessionStart_Data),
-    UserPromptSubmit(harness::SessionId),
-    PermissionRequest(harness::SessionId),
-    PostToolUse(harness::SessionId),
-    Stop(Stop_Data),
-    SessionEnd(SessionEnd_Data),
+pub struct Report_Data {
+    pub session_id: harness::SessionId,
+    pub hook: Hook,
 }
 #[rustfmt::skip]
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "datom", derive(datom_codec::Datomizable, datom_codec::Composing))]
 pub enum Input {
-    Report(Hook),
+    Report(Report_Data),
     Listening,
 }
 #[rustfmt::skip]
@@ -66,7 +64,7 @@ pub enum Output {
 #[rustfmt::skip]
 #[allow(clippy::result_large_err, clippy::ptr_arg, clippy::borrowed_box)]
 pub trait Answering {
-    fn report(&self, hook: &Hook) -> core::result::Result<(), Output>;
+    fn report(&self, report: &Report_Data) -> core::result::Result<(), Output>;
     fn listening(&self) -> core::result::Result<(), Output>;
 }
 #[rustfmt::skip]

@@ -1,5 +1,5 @@
 Emission
-[ harness:[ FilePath Tokens Compaction ]
+[ harness:[ FilePath Tokens Compaction Prompt ]
   claude_harness:[ Offset ReadFrom RowCount ]
   claude_harness:meta:[ Hooks HookClient ] ]
 [ Follow.{ FilePath ReadFrom RowCount }
@@ -8,7 +8,7 @@ Emission
   Installation.[ Installed.FilePath
                  Uninstalled.Integer ] ]
 [ Row.[ Assistant.Tokens
-        TurnStarted
+        TurnStarted.Prompt
         TurnEnded
         Interrupted
         Compacted.{ Compaction Option<Tokens> }

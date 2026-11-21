@@ -1,13 +1,12 @@
 Memory
-[ harness:[ Event FilePath Observed ]
-  flow:[ FlowId ]
+[ harness:[ SessionId Event FilePath Observed ]
   claude_harness:[ Offset ReadFrom ]
   claude_harness:processes:[ Changed ]
   claude_harness:meta:[ Set ] ]
-[ Watch.{ FlowId FilePath ReadFrom }
+[ Watch.{ SessionId FilePath ReadFrom }
   Observed
   Keep.Set ]
-[ Observe.{ FlowId Vector<Event> Option<Offset> }
+[ Observe.{ SessionId Vector<Event> Option<Offset> }
   Recall.{} ]
 [ Observation.Vector<Changed>
   Recollection.Vector<Observed> ]

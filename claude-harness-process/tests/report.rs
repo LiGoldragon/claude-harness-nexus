@@ -2,7 +2,6 @@
 //! manager traces them.
 
 use claude_harness_process::*;
-use flow::FlowId;
 use harness::{Event, Flow, SessionId, State};
 use process::{Answer, Arrival, Caller, Gave, Given, Identity, Living, Path, ProcessId, ProcessManager, Root, Roots, Trace, Traced, Tracing, UserId};
 
@@ -29,10 +28,10 @@ fn a_report_gives_its_answer_and_its_observation_and_ends_observed() {
     let mut manager = ProcessManager::default();
     let mut world = World::default();
 
-    let report = Process::Report(ReportProcess { caller: caller(), hook: Hook::PostToolUse(session) });
+    let report = Process::Report(ReportProcess { caller: caller(), session_id: session.clone(), hook: Hook::PostToolUse });
     manager.bear(Living { identity: Roots::default().draw(), process: report.clone() }, &mut world);
 
-    let changed = Changed { flow_id: FlowId("15c0ce".into()), event: Event::ToolUsed, state: State::Flowing(Flow::Working) };
+    let changed = Changed { session_id: session.clone(), event: Event::ToolUsed, state: State::Flowing(Flow::Working) };
     let taken = Taken::Observation(Ok(Observation(vec![changed.clone()])));
     manager.hand(Given { identity: identity(1, &[]), taken: taken.clone() }, &mut world);
 
@@ -42,7 +41,7 @@ fn a_report_gives_its_answer_and_its_observation_and_ends_observed() {
         vec![
             Trace::Born(Living { identity: identity(1, &[]), process: report }),
             gave(Gift::Reported),
-            gave(Gift::Observe(Observe { flow_id: FlowId("15c0ce".into()), event_vector: vec![Event::ToolUsed], offset_option: None })),
+            gave(Gift::Observe(Observe { session_id: session.clone(), event_vector: vec![Event::ToolUsed], offset_option: None })),
             Trace::Took(Given { identity: identity(1, &[]), taken }),
             gave(Gift::Changed(changed)),
             Trace::Ended(process::Ended { identity: identity(1, &[]), outcome: Outcome::Report(Reporting::Observed) }),
@@ -61,7 +60,7 @@ fn what_comes_for_an_ended_process_is_let_go() {
 #[test]
 fn an_owned_process_ends_before_its_owner_the_last_born_first() {
     let watch = |name: &str| {
-        Process::Watch(WatchProcess { flow_id: FlowId(name.into()), file_path: harness::FilePath(format!("/t/{name}.jsonl")), read_from: ReadFrom::Offset(Offset(0)), row_count: RowCount(64) })
+        Process::Watch(WatchProcess { session_id: SessionId(name.into()), file_path: harness::FilePath(format!("/t/{name}.jsonl")), read_from: ReadFrom::Offset(Offset(0)), row_count: RowCount(64) })
     };
     let mut manager = ProcessManager::default();
     let mut world = World::default();
@@ -86,7 +85,7 @@ fn an_owned_process_ends_before_its_owner_the_last_born_first() {
 
 #[test]
 fn an_end_from_outside_takes_a_living_process_out_and_lets_go_of_a_gone_one() {
-    let watch = Process::Watch(WatchProcess { flow_id: FlowId("0ea2f9".into()), file_path: harness::FilePath("/t/0ea2f9.jsonl".into()), read_from: ReadFrom::Offset(Offset(0)), row_count: RowCount(64) });
+    let watch = Process::Watch(WatchProcess { session_id: SessionId("0ea2f9".into()), file_path: harness::FilePath("/t/0ea2f9.jsonl".into()), read_from: ReadFrom::Offset(Offset(0)), row_count: RowCount(64) });
     let forgotten = || Outcome::Watch(Watching::Forgotten);
     let mut manager = ProcessManager::default();
     let mut world = World::default();
@@ -102,7 +101,7 @@ fn an_end_from_outside_takes_a_living_process_out_and_lets_go_of_a_gone_one() {
 
 #[test]
 fn a_birth_under_an_ended_owner_is_let_go() {
-    let watch = Process::Watch(WatchProcess { flow_id: FlowId("0ea2f9".into()), file_path: harness::FilePath("/t/0ea2f9.jsonl".into()), read_from: ReadFrom::Offset(Offset(0)), row_count: RowCount(64) });
+    let watch = Process::Watch(WatchProcess { session_id: SessionId("0ea2f9".into()), file_path: harness::FilePath("/t/0ea2f9.jsonl".into()), read_from: ReadFrom::Offset(Offset(0)), row_count: RowCount(64) });
     let mut manager = ProcessManager::default();
     let mut world = World::default();
     manager.run(vec![Arrival::Born(Living { identity: identity(3, &[1]), process: watch })], &mut world);
@@ -111,7 +110,7 @@ fn a_birth_under_an_ended_owner_is_let_go() {
 
 #[test]
 fn at_the_end_what_the_signal_process_owns_ends_before_what_the_memory_process_owns() {
-    let watch = Process::Watch(WatchProcess { flow_id: FlowId("0ea2f9".into()), file_path: harness::FilePath("/t/0ea2f9.jsonl".into()), read_from: ReadFrom::Offset(Offset(0)), row_count: RowCount(64) });
+    let watch = Process::Watch(WatchProcess { session_id: SessionId("0ea2f9".into()), file_path: harness::FilePath("/t/0ea2f9.jsonl".into()), read_from: ReadFrom::Offset(Offset(0)), row_count: RowCount(64) });
     let subscribe = Process::Subscribe(SubscribeProcess { caller: caller() });
     let roots = Roots::default();
     let (first, second) = (roots.draw(), roots.draw());

@@ -11,7 +11,7 @@ extern crate alloc;
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "datom", derive(datom_codec::Datomizable, datom_codec::Composing))]
 pub struct Watch {
-    pub flow_id: flow::FlowId,
+    pub session_id: harness::SessionId,
     pub file_path: harness::FilePath,
     pub read_from: claude_harness::ReadFrom,
 }
@@ -23,7 +23,7 @@ pub struct Keep(pub claude_harness::meta::Set);
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "datom", derive(datom_codec::Datomizable, datom_codec::Composing))]
 pub struct Observe {
-    pub flow_id: flow::FlowId,
+    pub session_id: harness::SessionId,
     pub event_vector: alloc::vec::Vec<harness::Event>,
     pub offset_option: core::option::Option<claude_harness::Offset>,
 }

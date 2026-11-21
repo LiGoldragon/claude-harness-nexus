@@ -49,3 +49,19 @@ fn a_compact_boundary_of_a_trigger_not_known_is_other() {
     let unknown = COMPACT_BOUNDARY.replace(r#""trigger":"manual""#, r#""trigger":"hook""#);
     assert_eq!(Row::translate(&unknown), Ok(Row::Other));
 }
+
+#[test]
+fn a_prompt_hook_and_its_row_carry_the_same_id_and_digest() {
+    use claude_harness_process::{Hook, Report_Data};
+    use harness::{Prompt, PromptId, SessionId, Sha256};
+
+    let session_id = SessionId("15c0ce0b-1d0c-4c58-9a57-3f1c8f1e15c0".into());
+    let hook = r#"{"hook_event_name":"UserPromptSubmit","session_id":"15c0ce0b-1d0c-4c58-9a57-3f1c8f1e15c0","prompt_id":"p-1","prompt":"abc"}"#;
+    let row = r#"{"type":"user","turnPosition":0,"promptId":"p-1","message":{"content":[{"type":"text","text":"abc"}]}}"#;
+    let prompt = Prompt {
+        prompt_id: PromptId("p-1".into()),
+        sha256: Sha256("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad".into()),
+    };
+    assert_eq!(Report_Data::translate(hook), Ok(Report_Data { session_id, hook: Hook::UserPromptSubmit(prompt.clone()) }));
+    assert_eq!(Row::translate(row), Ok(Row::TurnStarted(prompt)));
+}

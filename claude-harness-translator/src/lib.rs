@@ -11,10 +11,11 @@ use std::process::ExitCode;
 
 use claude_harness_process::*;
 use process::{Caller, ProcessId, UserId};
-use harness::{BackgroundWork, Compaction, Description, EndReason, FilePath, Response, SessionId, Tokens, Trigger, WorkId, WorkKind};
+use harness::{BackgroundWork, Compaction, Description, EndReason, FilePath, Prompt, PromptId, Response, SessionId, Sha256, Tokens, Trigger, WorkId, WorkKind};
 use rustix::event::{PollFd, PollFlags};
 use rustix::fs::inotify;
 use serde_json::Value;
+use sha2::Digest;
 use transport::{Framed, Place, Placed};
 
 #[derive(Debug, PartialEq, Eq)]
@@ -45,13 +46,12 @@ fn work(task: &Value) -> Result<BackgroundWork, Untranslated> {
     Ok(BackgroundWork { work_id: WorkId(text(task, "id")?), work_kind, description: Description(text(task, "description").unwrap_or_default()) })
 }
 
-impl Translatable for Hook {
-    fn translate(payload: &str) -> Result<Hook, Untranslated> {
+impl Translatable for Report_Data {
+    fn translate(payload: &str) -> Result<Self, Untranslated> {
         let value: Value = serde_json::from_str(payload).map_err(|_| Untranslated::Unreadable)?;
-        let session = || text(&value, "session_id").map(SessionId);
-        Ok(match text(&value, "hook_event_name")?.as_str() {
+        let session_id = SessionId(text(&value, "session_id")?);
+        let hook = match text(&value, "hook_event_name")?.as_str() {
             "SessionStart" => Hook::SessionStart(SessionStart_Data {
-                session_id: session()?,
                 file_path: FilePath(text(&value, "transcript_path")?),
                 source: match text(&value, "source").ok().as_deref() {
                     Some("resume") => Source::Resume(value.get("context_tokens").and_then(Value::as_i64).map(Tokens)),
@@ -59,11 +59,10 @@ impl Translatable for Hook {
                     _ => Source::Startup,
                 },
             }),
-            "UserPromptSubmit" => Hook::UserPromptSubmit(session()?),
-            "PermissionRequest" => Hook::PermissionRequest(session()?),
-            "PostToolUse" => Hook::PostToolUse(session()?),
+            "UserPromptSubmit" => Hook::UserPromptSubmit(prompt(text(&value, "prompt_id")?, &text(&value, "prompt")?)),
+            "PermissionRequest" => Hook::PermissionRequest,
+            "PostToolUse" => Hook::PostToolUse,
             "Stop" => Hook::Stop(Stop_Data {
-                session_id: session()?,
                 response_option: text(&value, "last_assistant_message").ok().map(Response),
                 background_work_vector: value
                     .get("background_tasks")
@@ -76,16 +75,32 @@ impl Translatable for Hook {
                     })
                     .unwrap_or_default(),
             }),
-            "SessionEnd" => Hook::SessionEnd(SessionEnd_Data {
-                session_id: session()?,
-                end_reason: match text(&value, "reason")?.as_str() {
+            "SessionEnd" => Hook::SessionEnd(match text(&value, "reason")?.as_str() {
                     "clear" => EndReason::Cleared,
                     _ => EndReason::Exited,
-                },
             }),
             other => return Err(Untranslated::UnknownEvent(other.to_owned())),
-        })
+        };
+        Ok(Self { session_id, hook })
     }
+}
+
+fn prompt(id: String, text: &str) -> Prompt {
+    Prompt { prompt_id: PromptId(id), sha256: Sha256(format!("{:x}", sha2::Sha256::digest(text.as_bytes()))) }
+}
+
+fn row_prompt(value: &Value) -> Option<Prompt> {
+    let id = value.get("promptId")?.as_str()?;
+    let content = value.pointer("/message/content")?;
+    let text = match content {
+        Value::String(text) => text.as_str(),
+        Value::Array(items) => match items.as_slice() {
+            [item] if item.get("type").and_then(Value::as_str) == Some("text") => item.get("text")?.as_str()?,
+            _ => return None,
+        },
+        _ => return None,
+    };
+    Some(prompt(id.to_owned(), text))
 }
 
 /// Claude writes this user row when the user presses Escape mid-turn: a text
@@ -130,7 +145,7 @@ impl Translatable for Row {
         let summary = subtype == Some("stop_hook_summary") && value.get("preventedContinuation").and_then(Value::as_bool) == Some(false);
         Ok(match (value.get("type").and_then(Value::as_str), main_thread, usage) {
             (Some("user"), true, _) if interrupts(&value) => Row::Interrupted,
-            (Some("user"), true, _) if value.get("turnPosition").is_some_and(|position| !position.is_null()) => Row::TurnStarted,
+            (Some("user"), true, _) if value.get("turnPosition").is_some_and(|position| !position.is_null()) => row_prompt(&value).map_or(Row::Other, Row::TurnStarted),
             (Some("system"), true, _) if summary => Row::TurnEnded,
             (Some("system"), true, _) if subtype == Some("compact_boundary") => compaction(&value).map_or(Row::Other, Row::Compacted),
             (Some("assistant"), true, Some(usage)) => {

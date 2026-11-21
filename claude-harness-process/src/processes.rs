@@ -21,7 +21,7 @@ extern crate alloc;
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "datom", derive(datom_codec::Datomizable, datom_codec::Composing))]
 pub struct Changed {
-    pub flow_id: flow::FlowId,
+    pub session_id: harness::SessionId,
     pub event: harness::Event,
     pub state: harness::State,
 }
@@ -76,6 +76,7 @@ pub struct Prepared(pub core::option::Option<harness::FilePath>);
 #[cfg_attr(feature = "datom", derive(datom_codec::Datomizable, datom_codec::Composing))]
 pub struct ReportProcess {
     pub caller: process::Caller,
+    pub session_id: harness::SessionId,
     pub hook: claude_harness::signal::Hook,
 }
 #[rustfmt::skip]
@@ -91,7 +92,7 @@ pub enum ReportTaken {
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "datom", derive(datom_codec::Datomizable, datom_codec::Composing))]
 pub struct WatchProcess {
-    pub flow_id: flow::FlowId,
+    pub session_id: harness::SessionId,
     pub file_path: harness::FilePath,
     pub read_from: claude_harness::ReadFrom,
     pub row_count: claude_harness::RowCount,

@@ -14,6 +14,7 @@ datom-codec = { workspace = true }
 protos = { workspace = true }
 rustix = { workspace = true }
 serde_json = { workspace = true }
+sha2 = "0.10"
 signal-harness = { git = "https://github.com/LiGoldragon/signal-harness", rev = "f302b3088c719a3df1991b7701899dea7dce7288", features = ["datom"] }
 signal-claude-prepare = { git = "https://github.com/LiGoldragon/signal-claude-prepare", rev = "3776141276237e2a88bd458ec15b3ccc0396faf9", features = ["datom"] }
 
