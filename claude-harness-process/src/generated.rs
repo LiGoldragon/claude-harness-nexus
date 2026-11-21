@@ -94,7 +94,8 @@ generated! {
     pub struct SubscribeProcess { pub caller: Caller }
     pub struct ConfigureProcess { pub caller: Caller, pub set: Set }
     pub struct Configured(pub Set);
-    pub enum Configuring { Configured, Unremembered }
+    // Configured is meta's, imported into the process file, so the variant of that name carries it.
+    pub enum Configuring { Configured(Configured), Unremembered }
     // The hook client and the hooks, moved in at birth; no hook client configured is a None.
     pub struct PrepareProcess { pub hook_client_option: Option<HookClient>, pub hooks: Hooks }
     pub enum Preparing { Installed, Uninstalled, Unobserved, Unconfigured }

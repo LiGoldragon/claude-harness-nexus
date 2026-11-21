@@ -175,8 +175,9 @@ impl Processable for ConfigureProcess {
     fn take<N: Giving<Gift>>(&mut self, answer: Answer, mut manager: N) -> Option<Configuring> {
         match answer {
             Answer::Succeeded => {
-                manager.give(Configured(self.set.clone()));
-                Some(Configuring::Configured)
+                let configured = Configured(self.set.clone());
+                manager.give(configured.clone());
+                Some(Configuring::Configured(configured))
             }
             Answer::Failed => Some(Configuring::Unremembered),
         }
