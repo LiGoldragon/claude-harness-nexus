@@ -1,5 +1,8 @@
 Signal
-[ claude_harness:memory:[ Count ] ]
+[ claude_harness:[ RowCount ] ]
 [ Configure.Set ]
 [ Configured.Set ]
-[ Set.[ Count ] ]
+[ HookName.String
+  Set.[ Hooks.Vector<HookName>
+        RemoveHook.HookName
+        RowCount ] ]

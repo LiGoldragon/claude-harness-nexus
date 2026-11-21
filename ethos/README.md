@@ -1,8 +1,12 @@
 The ethos of each root of the Claude Harness Nexus; generated.rs in claude-harness-process is
-written by hand from them. Checked with ethos-zero 30.1.0:
+written by hand from them. Checked with ethos-zero at github:LiGoldragon/ethos-zero 415c37036:
 
-- signal.ethos, emission.ethos (an Emission written as a Signal): Checked.
-- meta.ethos: Rejected, TooFewVariants.Set. The meta surface sets one value, Count.
-- memory.ethos: Rejected, Arity.{ 2 5 }. It follows Process.4's Memory sketch (records, changes,
-  answers, types); ethos-zero's Memory root takes two sections.
-- process.ethos: Rejected, Root. ethos-zero knows no Process root; the file follows Process.4.
+- signal.ethos, meta.ethos, emission.ethos (an Emission written as a Signal): Checked.
+  Listening, in the Signal's inputs, is the library's input every Nexus has: its translator
+  tells it that it has begun to listen.
+- memory.ethos: Checked. The Memory root holds its two sections, the imports and the records.
+- library.ethos: Checked. The changes and their answers, Observe, Observation, Configure, Recall,
+  Recollection, Answer, and Offset and RowCount, are declared here until the Memory page
+  places them.
+- process.ethos: Rejected, Root. ethos-zero knows no Process root; the file follows Process.4,
+  unchecked until it is ruled.

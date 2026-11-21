@@ -102,19 +102,18 @@ impl Processable for WatchProcess {
     type Outcome = Watching;
 
     fn begin<N: Giving<Gift>>(&mut self, mut manager: N) -> Option<Watching> {
-        manager.give(Follow { file_path: self.file_path.clone(), offset: self.offset.clone(), count: self.count.clone() });
+        manager.give(Follow { file_path: self.file_path.clone(), offset: self.offset.clone(), row_count: self.row_count.clone() });
         None
     }
 
     fn take<N: Giving<Gift>>(&mut self, taken: WatchTaken, mut manager: N) -> Option<Watching> {
         match taken {
-            WatchTaken::Following(Ok(Following::Rows(rows))) => {
-                self.offset = rows.offset;
-                let event_vector = rows.row_vector.iter().flat_map(Observable::events).collect();
+            WatchTaken::Following(Ok(following)) => {
+                self.offset = following.offset;
+                let event_vector = following.row_vector.iter().flat_map(Observable::events).collect();
                 manager.give(Observe { flow_id: self.flow_id.clone(), event_vector, offset_option: Some(self.offset.clone()) });
                 None
             }
-            WatchTaken::Following(Ok(Following::Missing)) => Some(Watching::Missing),
             WatchTaken::Following(Err(_)) => Some(Watching::Unfollowed),
             WatchTaken::Observation(observation) => {
                 for changed in observation.0 {
@@ -129,15 +128,16 @@ impl Processable for WatchProcess {
 impl Processable for SubscribeProcess {
     type Taken = SubscribeTaken;
     type Gift = Gift;
-    type Outcome = Subscribing;
+    /// It ends one way, when its connection closes, and so declares no outcome.
+    type Outcome = ();
 
-    fn begin<N: Giving<Gift>>(&mut self, mut manager: N) -> Option<Subscribing> {
+    fn begin<N: Giving<Gift>>(&mut self, mut manager: N) -> Option<()> {
         manager.give(Recall);
         None
     }
 
     /// It answers with every session as it is now, then rests while its connection is open.
-    fn take<N: Giving<Gift>>(&mut self, taken: SubscribeTaken, mut manager: N) -> Option<Subscribing> {
+    fn take<N: Giving<Gift>>(&mut self, taken: SubscribeTaken, mut manager: N) -> Option<()> {
         match taken {
             SubscribeTaken::Recollection(recollection) => manager.give(Subscribed(recollection.0)),
         }

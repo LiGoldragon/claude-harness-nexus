@@ -1,8 +1,7 @@
 Signal
 [ harness:[ FilePath Tokens ]
-  claude_harness:memory:[ Offset Count ] ]
-[ Follow.{ FilePath Offset Count } ]
-[ Following.[ Rows.{ Vector<Row> Offset }
-              Missing ] ]
+  claude_harness:[ Offset RowCount ] ]
+[ Follow.{ FilePath Offset RowCount } ]
+[ Following.{ Vector<Row> Offset } ]
 [ Row.[ Assistant.Tokens
         Other ] ]

@@ -3,7 +3,8 @@
 //!
 //! Nothing here waits. What waits, the queue, the sockets and the disk, is the
 //! world the manager is handed: the queue it iterates and the Tracing it
-//! writes every birth, gift, taking and end into.
+//! writes every birth, gift, taking and end into. The manager draws no
+//! identity: the one that bears a process draws it.
 
 // The text side, where datom is spoken, is built with std; the Nexus's build is not.
 #![cfg_attr(not(feature = "datom"), no_std)]
@@ -11,6 +12,7 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 use core::marker::PhantomData;
+use core::sync::atomic::{AtomicI64, Ordering};
 
 #[cfg_attr(feature = "datom", derive(datom_codec::Datomizable, datom_codec::Composing))]
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -55,9 +57,17 @@ pub struct Ended<O> {
     pub outcome: O,
 }
 
+/// A moment, in nanoseconds since the Unix epoch.
+#[cfg_attr(feature = "datom", derive(datom_codec::Datomizable, datom_codec::Composing))]
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Moment(pub i64);
+
+/// Every entry of a run's trace: its first is Started, the program's own start,
+/// so a run is told from the one before it; identities are unique within a run.
 #[cfg_attr(feature = "datom", derive(datom_codec::Datomizable, datom_codec::Composing))]
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum Trace<P, G, T, O> {
+    Started(Moment),
     Born(Living<P>),
     Gave(Gave<G>),
     Took(Given<T>),
@@ -89,14 +99,39 @@ pub trait Unwindable {
     fn unwound() -> Self;
 }
 
+/// The two waiting sides of the library, outside the table: every root process
+/// is owned by one of them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Owner {
+    Signal,
+    Memory,
+}
+
+/// A process is born of a call, owned by the signal process, or of a record,
+/// owned by the memory process.
+pub trait Ownable {
+    fn owner(&self) -> Owner;
+}
+
+/// The one counter the signal process and the memory process draw a Root from.
+#[derive(Debug, Default)]
+pub struct Roots(AtomicI64);
+
+impl Roots {
+    pub fn draw(&self) -> Identity {
+        Identity { root: Root(self.0.fetch_add(1, Ordering::Relaxed) + 1), path: Path(Vec::new()) }
+    }
+}
+
 /// The trace of one Nexus's processes.
 pub type Traced<P> = Trace<P, <P as Processable>::Gift, <P as Processable>::Taken, <P as Processable>::Outcome>;
 
-/// What the queue yields: a process to be born, a thing for a living one, or
-/// the end of one, which is taken out of the table at that moment.
+/// What the queue yields: a process born, its identity already drawn by the one
+/// that bears it; a thing for a living one; or the end of one, which is taken
+/// out of the table at that moment.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Arrival<P: Processable> {
-    Born { owner: Option<Identity>, process: P },
+    Born(Living<P>),
     Given(Given<P::Taken>),
     Ended(Ended<P::Outcome>),
 }
@@ -106,19 +141,13 @@ pub trait Tracing<P: Processable> {
     fn trace(&mut self, trace: Traced<P>);
 }
 
-struct Entry<P> {
-    living: Living<P>,
-    born: i64,
-}
-
 pub struct ProcessManager<P> {
-    table: Vec<Entry<P>>,
-    roots: i64,
+    table: Vec<Living<P>>,
 }
 
 impl<P> Default for ProcessManager<P> {
     fn default() -> Self {
-        Self { table: Vec::new(), roots: 0 }
+        Self { table: Vec::new() }
     }
 }
 
@@ -143,42 +172,39 @@ where
 {
     /// The manager's one queue is any iterator of arrivals: its next waits for
     /// the next thing, and its end ends every process.
-    pub fn run<Q: IntoIterator<Item = Arrival<P>>, W: Tracing<P>>(&mut self, queue: Q, world: &mut W) {
+    pub fn run<Q: IntoIterator<Item = Arrival<P>>, W: Tracing<P>>(&mut self, queue: Q, world: &mut W)
+    where
+        P: Ownable,
+    {
         for arrival in queue {
-            match arrival {
-                Arrival::Born { owner, process } => self.bear(owner, process, world),
-                Arrival::Given(given) => self.hand(given, world),
-                Arrival::Ended(ended) => {
-                    if self.table.iter().any(|entry| entry.living.identity == ended.identity) {
-                        self.end(ended.identity, ended.outcome, world);
-                    }
-                }
-            }
+            self.arrive(arrival, world);
         }
         self.end_all(world);
     }
 
-    pub fn bear<W: Tracing<P>>(&mut self, owner: Option<Identity>, process: P, world: &mut W) {
-        let identity = match owner {
-            None => {
-                self.roots += 1;
-                Identity { root: Root(self.roots), path: Path(Vec::new()) }
-            }
-            Some(owner) => match self.table.iter_mut().find(|entry| entry.living.identity == owner) {
-                Some(entry) => {
-                    entry.born += 1;
-                    let mut path = owner.path.0.clone();
-                    path.push(entry.born);
-                    Identity { root: owner.root, path: Path(path) }
+    pub fn arrive<W: Tracing<P>>(&mut self, arrival: Arrival<P>, world: &mut W) {
+        match arrival {
+            Arrival::Born(living) => self.bear(living, world),
+            Arrival::Given(given) => self.hand(given, world),
+            Arrival::Ended(ended) => {
+                if self.table.iter().any(|living| living.identity == ended.identity) {
+                    self.end(ended.identity, ended.outcome, world);
                 }
-                None => return,
-            },
-        };
-        world.trace(Trace::Born(Living { identity: identity.clone(), process: process.clone() }));
-        let mut living = Living { identity, process };
+            }
+        }
+    }
+
+    /// Puts a process in the table and begins it. A process born under an
+    /// owner that has ended is let go.
+    pub fn bear<W: Tracing<P>>(&mut self, mut living: Living<P>, world: &mut W) {
+        let owned = !living.identity.path.0.is_empty();
+        if owned && !self.table.iter().any(|held| held.identity.owns(&living.identity)) {
+            return;
+        }
+        world.trace(Trace::Born(living.clone()));
         let outcome = living.process.begin(Giver { identity: &living.identity, world: &mut *world, process: PhantomData });
         let identity = living.identity.clone();
-        self.table.push(Entry { living, born: 0 });
+        self.table.push(living);
         if let Some(outcome) = outcome {
             self.end(identity, outcome, world);
         }
@@ -186,11 +212,10 @@ where
 
     /// Hands a thing to the process it is for; a thing for an ended process is let go.
     pub fn hand<W: Tracing<P>>(&mut self, given: Given<P::Taken>, world: &mut W) {
-        let Some(entry) = self.table.iter_mut().find(|entry| entry.living.identity == given.identity) else {
+        let Some(living) = self.table.iter_mut().find(|living| living.identity == given.identity) else {
             return;
         };
         world.trace(Trace::Took(given.clone()));
-        let living = &mut entry.living;
         let giver = Giver { identity: &living.identity, world: &mut *world, process: PhantomData };
         if let Some(outcome) = living.process.take(given.taken, giver) {
             self.end(given.identity, outcome, world);
@@ -203,32 +228,38 @@ where
         for owned in owned.into_iter().rev() {
             self.end(owned, P::Outcome::unwound(), world);
         }
-        self.table.retain(|entry| entry.living.identity != identity);
+        self.table.retain(|living| living.identity != identity);
         world.trace(Trace::Ended(Ended { identity, outcome }));
     }
 
-    /// Every living process, ended the last born first.
-    pub fn end_all<W: Tracing<P>>(&mut self, world: &mut W) {
-        let roots: Vec<Identity> = self
-            .table
-            .iter()
-            .map(|entry| entry.living.identity.clone())
-            .filter(|identity| identity.path.0.is_empty())
-            .collect();
-        for root in roots.into_iter().rev() {
-            self.end(root, P::Outcome::unwound(), world);
+    /// Every living process: what the signal process owns, then what the
+    /// memory process owns, each the last born first.
+    pub fn end_all<W: Tracing<P>>(&mut self, world: &mut W)
+    where
+        P: Ownable,
+    {
+        for owner in [Owner::Signal, Owner::Memory] {
+            let roots: Vec<Identity> = self
+                .table
+                .iter()
+                .filter(|living| living.identity.path.0.is_empty() && living.process.owner() == owner)
+                .map(|living| living.identity.clone())
+                .collect();
+            for root in roots.into_iter().rev() {
+                self.end(root, P::Outcome::unwound(), world);
+            }
         }
     }
 
     fn owned_by<'a>(&'a self, owner: &'a Identity) -> impl Iterator<Item = Identity> + 'a {
-        self.table
-            .iter()
-            .map(|entry| &entry.living.identity)
-            .filter(move |identity| {
-                identity.root == owner.root
-                    && identity.path.0.len() == owner.path.0.len() + 1
-                    && identity.path.0.starts_with(&owner.path.0)
-            })
-            .cloned()
+        self.table.iter().map(|living| &living.identity).filter(move |identity| owner.owns(identity)).cloned()
+    }
+}
+
+impl Identity {
+    /// The owner of a process is read from its identity: its Root, and its
+    /// Path with one position more.
+    pub fn owns(&self, other: &Identity) -> bool {
+        other.root == self.root && other.path.0.len() == self.path.0.len() + 1 && other.path.0.starts_with(&self.path.0)
     }
 }

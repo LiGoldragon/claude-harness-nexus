@@ -2,13 +2,14 @@
 //! ethos of the Claude Harness Nexus. Written by hand while ethos-zero knows no
 //! Process root; every path names core or alloc, so it builds with no_std.
 
+use alloc::string::String;
 use alloc::vec::Vec;
 use core::option::Option;
 use core::result::Result;
 
 use flow::FlowId;
 use harness::{BackgroundWork, EndReason, Event, FilePath, Observed, Response, Session, State, Tokens};
-use process::{Givable, Giving, Processable, Unwindable};
+use process::{Givable, Giving, Ownable, Owner, Processable, Unwindable};
 
 macro_rules! generated {
     ($($item:item)*) => { $(
@@ -36,20 +37,24 @@ generated! {
     }
     pub struct Reported;
     pub struct Changed { pub flow_id: FlowId, pub event: Event, pub state: State }
-    pub enum Input { Report(Hook), Subscribe }
+    // Listening is the library's, one input every Nexus has: its translator has begun to listen.
+    pub enum Input { Report(Hook), Subscribe, Listening }
     pub struct Call { pub caller: Caller, pub input: Input }
     pub struct Subscribed(pub Vec<Observed>);
-    pub enum Output { Reported(Reported), Subscribed(Subscribed), Changed(Changed) }
+    pub enum Output { Reported, Subscribed(Subscribed), Changed(Changed) }
 
     // Meta signal
-    pub enum Set { Count(Count) }
+    pub struct HookName(pub String);
+    pub enum Set { Hooks(Vec<HookName>), RemoveHook(HookName), RowCount(RowCount) }
     pub enum MetaInput { Configure(Set) }
     pub enum MetaOutput { Configured(Set) }
     pub struct MetaCall { pub caller: Caller, pub meta_input: MetaInput }
 
-    // Memory
+    // Library: the changes and their types, until the Memory page places them
     pub struct Offset(pub i64);
-    pub struct Count(pub i64);
+    pub struct RowCount(pub i64);
+
+    // Memory
     pub struct Watch { pub flow_id: FlowId, pub file_path: FilePath, pub offset: Offset }
     pub struct Observe { pub flow_id: FlowId, pub event_vector: Vec<Event>, pub offset_option: Option<Offset> }
     pub struct Observation(pub Vec<Changed>);
@@ -57,25 +62,23 @@ generated! {
     pub struct Recall;
     pub struct Recollection(pub Vec<Observed>);
     pub struct Configure(pub Set);
-    pub struct Remembered { pub observed_vector: Vec<Observed>, pub watch_vector: Vec<Watch>, pub count_option: Option<Count> }
+    pub struct Remembered { pub observed_vector: Vec<Observed>, pub watch_vector: Vec<Watch>, pub row_count_option: Option<RowCount>, pub hook_name_vector: Vec<HookName> }
 
     // Emission
-    pub struct Follow { pub file_path: FilePath, pub offset: Offset, pub count: Count }
-    pub struct Rows { pub row_vector: Vec<Row>, pub offset: Offset }
-    pub enum Following { Rows(Rows), Missing }
+    pub struct Follow { pub file_path: FilePath, pub offset: Offset, pub row_count: RowCount }
+    pub struct Following { pub row_vector: Vec<Row>, pub offset: Offset }
     pub enum Row { Assistant(Tokens), Other }
     pub enum Unobserved { Unsubmitted, Unanswered }
 
     // Process
     pub struct ReportProcess { pub caller: Caller, pub hook: Hook }
-    pub struct WatchProcess { pub flow_id: FlowId, pub file_path: FilePath, pub offset: Offset, pub count: Count }
+    pub struct WatchProcess { pub flow_id: FlowId, pub file_path: FilePath, pub offset: Offset, pub row_count: RowCount }
     pub enum ReportTaken { Answer(Answer), Observation(Observation) }
     pub enum WatchTaken { Following(Result<Following, Unobserved>), Observation(Observation) }
     pub enum Reporting { Observed, Unremembered }
-    pub enum Watching { Missing, Unfollowed, Forgotten }
+    pub enum Watching { Forgotten, Unfollowed }
     pub struct SubscribeProcess { pub caller: Caller }
     pub enum SubscribeTaken { Recollection(Recollection) }
-    pub enum Subscribing { Closed }
     pub struct ConfigureProcess { pub caller: Caller, pub set: Set }
     pub enum ConfigureTaken { Answer(Answer) }
     pub struct Configured(pub Set);
@@ -83,9 +86,10 @@ generated! {
 
     // The enums over the Nexus's processes
     pub enum Process { Report(ReportProcess), Watch(WatchProcess), Subscribe(SubscribeProcess), Configure(ConfigureProcess) }
-    pub enum Gift { Reported(Reported), Subscribed(Subscribed), Changed(Changed), Watch(Watch), Observe(Observe), Recall(Recall), Configure(Configure), Configured(Configured), Follow(Follow) }
+    pub enum Gift { Reported, Subscribed(Subscribed), Changed(Changed), Watch(Watch), Observe(Observe), Recall(Recall), Configure(Configure), Configured(Configured), Follow(Follow) }
     pub enum Taken { Answer(Answer), Observation(Observation), Recollection(Recollection), Following(Result<Following, Unobserved>) }
-    pub enum Outcome { Reporting(Reporting), Watching(Watching), Subscribing(Subscribing), Configuring(Configuring), Unwound }
+    // One variant for each process, named for it; a process that ends one way carries nothing.
+    pub enum Outcome { Report(Reporting), Watch(Watching), Subscribe, Configure(Configuring), Unwound }
 }
 
 macro_rules! givable {
@@ -95,8 +99,11 @@ macro_rules! givable {
     )* };
 }
 
+// An output that carries nothing is a variant of the Gift that carries nothing.
+impl Givable for Reported { type Returned = (); }
+impl From<Reported> for Gift { fn from(Reported: Reported) -> Gift { Gift::Reported } }
+
 givable! {
-    Reported => (),
     Subscribed => (),
     Recall => Recollection,
     Configure => Answer,
@@ -113,6 +120,15 @@ impl Unwindable for Outcome {
     }
 }
 
+impl Ownable for Process {
+    fn owner(&self) -> Owner {
+        match self {
+            Process::Watch(_) => Owner::Memory,
+            Process::Report(_) | Process::Subscribe(_) | Process::Configure(_) => Owner::Signal,
+        }
+    }
+}
+
 impl Processable for Process {
     type Taken = Taken;
     type Gift = Gift;
@@ -120,21 +136,21 @@ impl Processable for Process {
 
     fn begin<N: Giving<Gift>>(&mut self, giving: N) -> Option<Outcome> {
         match self {
-            Process::Report(report) => report.begin(giving).map(Outcome::Reporting),
-            Process::Watch(watch) => watch.begin(giving).map(Outcome::Watching),
-            Process::Subscribe(subscribe) => subscribe.begin(giving).map(Outcome::Subscribing),
-            Process::Configure(configure) => configure.begin(giving).map(Outcome::Configuring),
+            Process::Report(report) => report.begin(giving).map(Outcome::Report),
+            Process::Watch(watch) => watch.begin(giving).map(Outcome::Watch),
+            Process::Subscribe(subscribe) => subscribe.begin(giving).map(|()| Outcome::Subscribe),
+            Process::Configure(configure) => configure.begin(giving).map(Outcome::Configure),
         }
     }
 
     fn take<N: Giving<Gift>>(&mut self, taken: Taken, giving: N) -> Option<Outcome> {
         match (self, taken) {
-            (Process::Report(report), Taken::Answer(answer)) => report.take(ReportTaken::Answer(answer), giving).map(Outcome::Reporting),
-            (Process::Report(report), Taken::Observation(observation)) => report.take(ReportTaken::Observation(observation), giving).map(Outcome::Reporting),
-            (Process::Watch(watch), Taken::Following(following)) => watch.take(WatchTaken::Following(following), giving).map(Outcome::Watching),
-            (Process::Watch(watch), Taken::Observation(observation)) => watch.take(WatchTaken::Observation(observation), giving).map(Outcome::Watching),
-            (Process::Subscribe(subscribe), Taken::Recollection(recollection)) => subscribe.take(SubscribeTaken::Recollection(recollection), giving).map(Outcome::Subscribing),
-            (Process::Configure(configure), Taken::Answer(answer)) => configure.take(ConfigureTaken::Answer(answer), giving).map(Outcome::Configuring),
+            (Process::Report(report), Taken::Answer(answer)) => report.take(ReportTaken::Answer(answer), giving).map(Outcome::Report),
+            (Process::Report(report), Taken::Observation(observation)) => report.take(ReportTaken::Observation(observation), giving).map(Outcome::Report),
+            (Process::Watch(watch), Taken::Following(following)) => watch.take(WatchTaken::Following(following), giving).map(Outcome::Watch),
+            (Process::Watch(watch), Taken::Observation(observation)) => watch.take(WatchTaken::Observation(observation), giving).map(Outcome::Watch),
+            (Process::Subscribe(subscribe), Taken::Recollection(recollection)) => subscribe.take(SubscribeTaken::Recollection(recollection), giving).map(|()| Outcome::Subscribe),
+            (Process::Configure(configure), Taken::Answer(answer)) => configure.take(ConfigureTaken::Answer(answer), giving).map(Outcome::Configure),
             _ => None,
         }
     }

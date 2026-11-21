@@ -2,7 +2,8 @@ Signal
 [ harness:[ Session FilePath Response BackgroundWork EndReason Event State Observed ]
   flow:[ FlowId ] ]
 [ Report.Hook
-  Subscribe ]
+  Subscribe
+  Listening ]
 [ Reported
   Subscribed.Vector<Observed>
   Changed.{ FlowId Event State } ]

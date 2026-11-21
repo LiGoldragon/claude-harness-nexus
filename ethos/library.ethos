@@ -1,0 +1,15 @@
+Library
+[ harness:[ Event Observed ]
+  flow:[ FlowId ]
+  claude_harness:signal:[ Changed ]
+  claude_harness:meta:[ Set ] ]
+[ Offset.Integer
+  RowCount.Integer
+  Answer.[ Succeeded Failed ]
+  Observe.{ FlowId Vector<Event> Option<Offset> }
+  Observation.Vector<Changed>
+  Configure.Set
+  Recall.{}
+  Recollection.Vector<Observed> ]
+[]
+[]
