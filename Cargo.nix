@@ -296,7 +296,7 @@ rec {
       };
       "claude-harness-process" = rec {
         crateName = "claude-harness-process";
-        version = "0.1.0";
+        version = "0.2.0";
         edition = "2024";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./claude-harness-process; };
         libName = "claude_harness_process";
@@ -346,6 +346,11 @@ rec {
           {
             name = "claude-harness-hook";
             path = "src/bin/claude-harness-hook.rs";
+            requiredFeatures = [ ];
+          }
+          {
+            name = "claude-harness-meta";
+            path = "src/bin/claude-harness-meta.rs";
             requiredFeatures = [ ];
           }
           {

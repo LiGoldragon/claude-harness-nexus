@@ -9,6 +9,9 @@ mod generated;
 
 pub use generated::*;
 
+/// The version of these types: the memory and the trace are named for it.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -139,5 +142,26 @@ impl Processable for SubscribeProcess {
             SubscribeTaken::Recollection(recollection) => manager.give(Subscribed(recollection.0)),
         }
         None
+    }
+}
+
+impl Processable for ConfigureProcess {
+    type Taken = ConfigureTaken;
+    type Gift = Gift;
+    type Outcome = Configuring;
+
+    fn begin<N: Giving<Gift>>(&mut self, mut manager: N) -> Option<Configuring> {
+        manager.give(Configure(self.set.clone()));
+        None
+    }
+
+    fn take<N: Giving<Gift>>(&mut self, taken: ConfigureTaken, mut manager: N) -> Option<Configuring> {
+        match taken {
+            ConfigureTaken::Answer(Answer::Succeeded) => {
+                manager.give(Configured(self.set.clone()));
+                Some(Configuring::Configured)
+            }
+            ConfigureTaken::Answer(Answer::Failed) => Some(Configuring::Unremembered),
+        }
     }
 }

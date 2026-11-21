@@ -12,45 +12,29 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use claude_harness_process::*;
-use harness::{Observed, State, Tokens, Transitionable};
 use flow::FlowId;
+use harness::{Observed, State, Tokens, Transitionable};
 use process::{Arrival, Ended, Gave, Given, Identity, Living, ProcessManager, Trace, Traced, Tracing};
 use transport::{Framed, Place, Placed};
 
 type Queue = Sender<Arrival<Process>>;
 
-/// What the memory process keeps on disk.
-#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, Default)]
-struct Remembered {
-    observed_vector: Vec<Observed>,
-    watch_vector: Vec<Watch>,
-}
-
 /// The memory process: one change at a time, each kept before it is answered.
 struct MemoryProcess {
     remembered: Remembered,
     file: std::path::PathBuf,
-    count: Count,
 }
 
 impl MemoryProcess {
-    fn open(place: &Place, count: Count) -> MemoryProcess {
-        let file = place.path(Placed::Memory);
+    fn open(place: &Place) -> MemoryProcess {
+        let file = place.path(Placed::Memory(VERSION));
         let remembered = File::open(&file)
             .ok()
             .and_then(|file| Remembered::read_from(&mut BufReader::new(file)).ok().flatten())
-            .unwrap_or_default();
-        let mut memory = MemoryProcess { remembered, file, count };
+            .unwrap_or(Remembered { observed_vector: Vec::new(), watch_vector: Vec::new(), count_option: None });
+        let mut memory = MemoryProcess { remembered, file };
         memory.forget_ended();
         memory
-    }
-
-    /// A Watch outlives no session: one whose session has ended is forgotten.
-    fn forget_ended(&mut self) {
-        let observed = &self.remembered.observed_vector;
-        self.remembered
-            .watch_vector
-            .retain(|watch| !observed.iter().any(|observed| observed.flow_id == watch.flow_id && observed.state == State::Ended));
     }
 
     fn keep(&self) -> Answer {
@@ -64,25 +48,42 @@ impl MemoryProcess {
         }
     }
 
-    fn process_of(&self, watch: &Watch) -> Process {
-        Process::Watch(WatchProcess { flow_id: watch.flow_id.clone(), file_path: watch.file_path.clone(), offset: watch.offset.clone(), count: self.count.clone() })
+    /// A Watch outlives no session: one whose session has ended is forgotten.
+    fn forget_ended(&mut self) {
+        let observed = &self.remembered.observed_vector;
+        self.remembered
+            .watch_vector
+            .retain(|watch| !observed.iter().any(|observed| observed.flow_id == watch.flow_id && observed.state == State::Ended));
     }
 
-    /// A Watch first kept is born as its process; one already held is answered alone.
-    fn watch(&mut self, watch: Watch) -> (Answer, Option<Process>) {
-        if self.remembered.watch_vector.iter().any(|held| held.flow_id == watch.flow_id && held.file_path == watch.file_path) {
-            return (Answer::Succeeded, None);
+    fn holds_watch(&self, flow_id: &FlowId) -> bool {
+        self.remembered.watch_vector.iter().any(|watch| watch.flow_id == *flow_id)
+    }
+
+    /// A Watch's process, when the count it is born with is configured.
+    fn process_of(&self, watch: &Watch) -> Option<Process> {
+        let count = self.remembered.count_option.clone()?;
+        Some(Process::Watch(WatchProcess { flow_id: watch.flow_id.clone(), file_path: watch.file_path.clone(), offset: watch.offset.clone(), count }))
+    }
+
+    fn watch(&mut self, watch: Watch) -> Answer {
+        if self.remembered.watch_vector.contains(&watch) {
+            return Answer::Succeeded;
         }
         self.remembered.watch_vector.retain(|held| held.flow_id != watch.flow_id);
-        self.remembered.watch_vector.push(watch.clone());
-        match self.keep() {
-            Answer::Succeeded => (Answer::Succeeded, Some(self.process_of(&watch))),
-            Answer::Failed => (Answer::Failed, None),
+        self.remembered.watch_vector.push(watch);
+        self.keep()
+    }
+
+    fn configure(&mut self, Configure(set): Configure) -> Answer {
+        match set {
+            Set::Count(count) => self.remembered.count_option = Some(count),
         }
+        self.keep()
     }
 
     /// Applies each event and keeps the offset; a session that has ended forgets its Watch.
-    fn observe(&mut self, observe: Observe) -> (Observation, bool) {
+    fn observe(&mut self, observe: Observe) -> Observation {
         let position = match self.remembered.observed_vector.iter().position(|observed| observed.flow_id == observe.flow_id) {
             Some(position) => position,
             None => {
@@ -99,15 +100,14 @@ impl MemoryProcess {
                 Changed { flow_id: observe.flow_id.clone(), event, state: observed.state.clone() }
             })
             .collect();
-        let ended = observed.state == State::Ended;
-        self.forget_ended();
         if let Some(offset) = observe.offset_option {
             for watch in self.remembered.watch_vector.iter_mut().filter(|watch| watch.flow_id == observe.flow_id) {
                 watch.offset = offset.clone();
             }
         }
+        self.forget_ended();
         self.keep();
-        (Observation(changed), ended)
+        Observation(changed)
     }
 }
 
@@ -126,31 +126,43 @@ struct SignalProcess {
 }
 
 impl SignalProcess {
-    fn start(place: &Place, queue: Queue) -> std::io::Result<SignalProcess> {
-        let path = place.path(Placed::NexusSocket);
+    /// Each socket's calls become births; a call's connection waits, in the
+    /// order of the births, for the process it is bound to.
+    fn listen<C, F>(place: &Place, placed: Placed, arrived: Arc<Mutex<VecDeque<UnixStream>>>, queue: Queue, born: F) -> std::io::Result<()>
+    where
+        C: Framed + Send + 'static,
+        F: Fn(C) -> Process + Send + 'static,
+    {
+        let path = place.path(placed);
         let _ = std::fs::remove_file(&path);
         let listener = UnixListener::bind(&path)?;
-        let arrived = Arc::new(Mutex::new(VecDeque::new()));
-        let held = arrived.clone();
-        let calling = queue.clone();
         thread::spawn(move || {
             for mut stream in listener.incoming().flatten() {
-                let Ok(Some(call)) = Call::read_from(&mut stream) else { continue };
-                let process = match call.input {
-                    Input::Report(hook) => Process::Report(ReportProcess { caller: call.caller, hook }),
-                    Input::Subscribe => Process::Subscribe(SubscribeProcess { caller: call.caller }),
-                };
-                held.lock().expect("the arrived connections").push_back(stream);
-                if calling.send(Arrival::Born { owner: None, process }).is_err() {
+                let Ok(Some(call)) = C::read_from(&mut stream) else { continue };
+                let mut waiting = arrived.lock().expect("the arrived connections");
+                waiting.push_back(stream);
+                if queue.send(Arrival::Born { owner: None, process: born(call) }).is_err() {
                     return;
                 }
             }
         });
+        Ok(())
+    }
+
+    fn start(place: &Place, queue: Queue) -> std::io::Result<SignalProcess> {
+        let arrived = Arc::new(Mutex::new(VecDeque::new()));
+        SignalProcess::listen(place, Placed::NexusSocket, arrived.clone(), queue.clone(), |call: Call| match call.input {
+            Input::Report(hook) => Process::Report(ReportProcess { caller: call.caller, hook }),
+            Input::Subscribe => Process::Subscribe(SubscribeProcess { caller: call.caller }),
+        })?;
+        SignalProcess::listen(place, Placed::MetaSocket, arrived.clone(), queue.clone(), |call: MetaCall| match call.meta_input {
+            MetaInput::Configure(set) => Process::Configure(ConfigureProcess { caller: call.caller, set }),
+        })?;
         Ok(SignalProcess { arrived, connections: BTreeMap::new(), subscriptions: BTreeMap::new(), queue })
     }
 
-    /// A call's process takes the connection it came on: births come in the order the calls did.
-    /// A subscriber's process ends when its connection closes.
+    /// A call's process takes the connection it came on. A subscriber's
+    /// process ends when its connection closes.
     fn bind(&mut self, living: &Living<Process>) {
         if let Process::Watch(_) = living.process {
             return;
@@ -167,7 +179,7 @@ impl SignalProcess {
         self.connections.insert(living.identity.clone(), stream);
     }
 
-    fn answer(&mut self, identity: &Identity, output: Output) {
+    fn answer<T: Framed>(&mut self, identity: &Identity, output: &T) {
         if let Some(stream) = self.connections.get_mut(identity) {
             let _ = output.write_to(stream);
         }
@@ -179,14 +191,16 @@ impl SignalProcess {
     }
 
     fn subscribed(&mut self, identity: &Identity, output: Output) {
-        self.answer(identity, output);
-        if let Some(subscription) = self.subscriptions.get_mut(identity) {
-            subscription.answered = true;
-            for output in std::mem::take(&mut subscription.pending) {
-                if let Some(stream) = self.connections.get_mut(identity) {
-                    let _ = output.write_to(stream);
-                }
+        self.answer(identity, &output);
+        let pending = match self.subscriptions.get_mut(identity) {
+            Some(subscription) => {
+                subscription.answered = true;
+                std::mem::take(&mut subscription.pending)
             }
+            None => Vec::new(),
+        };
+        for output in pending {
+            self.answer(identity, &output);
         }
     }
 
@@ -252,59 +266,93 @@ impl EmissionSocket {
     }
 }
 
-/// The trace, archived as Signal in the Nexus's memory.
-struct Archive(File);
-
 /// Everything the manager does passes here: it is archived, and carried.
 struct World {
     signal: SignalProcess,
     memory: MemoryProcess,
     emission: EmissionSocket,
-    archive: Archive,
+    archive: File,
     queue: Queue,
-    /// The living Watch processes, by the flow each follows.
-    watching: Vec<(FlowId, Identity)>,
+    /// Each Watch that has a process, or one on its way to birth, by its flow.
+    watching: Vec<(FlowId, Option<Identity>)>,
 }
 
 impl World {
-    /// A Watch forgotten ends its process.
-    fn forget(&mut self, flow_id: &FlowId) {
-        let (forgotten, held): (Vec<_>, Vec<_>) = self.watching.drain(..).partition(|(watched, _)| watched == flow_id);
-        self.watching = held;
-        for (_, identity) in forgotten {
-            let outcome = Outcome::Watching(Watching::Forgotten);
-            let _ = self.queue.send(Arrival::Ended(Ended { identity, outcome }));
-        }
-    }
-
     fn give_back(&self, identity: Identity, taken: Taken) {
         let _ = self.queue.send(Arrival::Given(Given { identity, taken }));
     }
 
+    fn end(&self, identity: Identity, outcome: Outcome) {
+        let _ = self.queue.send(Arrival::Ended(Ended { identity, outcome }));
+    }
+
+    /// Every Watch kept and without a process is born, once its count is configured.
+    fn bear_watches(&mut self) {
+        let unborn: Vec<Process> = self
+            .memory
+            .remembered
+            .watch_vector
+            .iter()
+            .filter(|watch| !self.watching.iter().any(|(flow_id, _)| *flow_id == watch.flow_id))
+            .filter_map(|watch| self.memory.process_of(watch))
+            .collect();
+        for process in unborn {
+            if let Process::Watch(watch) = &process {
+                self.watching.push((watch.flow_id.clone(), None));
+            }
+            let _ = self.queue.send(Arrival::Born { owner: None, process });
+        }
+    }
+
+    /// A Watch forgotten ends its process.
+    fn forget(&mut self) {
+        let forgotten: Vec<Identity> = self
+            .watching
+            .iter()
+            .filter(|(flow_id, _)| !self.memory.holds_watch(flow_id))
+            .filter_map(|(_, identity)| identity.clone())
+            .collect();
+        for identity in forgotten {
+            self.end(identity, Outcome::Watching(Watching::Forgotten));
+        }
+    }
+
+    fn born(&mut self, living: &Living<Process>) {
+        self.signal.bind(living);
+        if let Process::Watch(watch) = &living.process {
+            self.watching.retain(|(flow_id, _)| *flow_id != watch.flow_id);
+            self.watching.push((watch.flow_id.clone(), Some(living.identity.clone())));
+            if !self.memory.holds_watch(&watch.flow_id) {
+                self.end(living.identity.clone(), Outcome::Watching(Watching::Forgotten));
+            }
+        }
+    }
+
     fn carry(&mut self, Gave { identity, gift }: Gave<Gift>) {
         match gift {
-            Gift::Reported(reported) => self.signal.answer(&identity, Output::Reported(reported)),
+            Gift::Reported(reported) => self.signal.answer(&identity, &Output::Reported(reported)),
             Gift::Subscribed(subscribed) => self.signal.subscribed(&identity, Output::Subscribed(subscribed)),
             Gift::Changed(changed) => self.signal.publish(Output::Changed(changed)),
+            Gift::Configured(Configured(set)) => self.signal.answer(&identity, &MetaOutput::Configured(set)),
             Gift::Recall(Recall) => {
                 self.signal.subscribe(&identity);
                 let recollection = Recollection(self.memory.remembered.observed_vector.clone());
                 self.give_back(identity, Taken::Recollection(recollection));
             }
             Gift::Watch(watch) => {
-                let (answer, born) = self.memory.watch(watch);
+                let answer = self.memory.watch(watch);
                 self.give_back(identity, Taken::Answer(answer));
-                if let Some(process) = born {
-                    let _ = self.queue.send(Arrival::Born { owner: None, process });
-                }
+                self.bear_watches();
+            }
+            Gift::Configure(configure) => {
+                let answer = self.memory.configure(configure);
+                self.give_back(identity, Taken::Answer(answer));
+                self.bear_watches();
             }
             Gift::Observe(observe) => {
-                let flow_id = observe.flow_id.clone();
-                let (observation, forgotten) = self.memory.observe(observe);
+                let observation = self.memory.observe(observe);
                 self.give_back(identity, Taken::Observation(observation));
-                if forgotten {
-                    self.forget(&flow_id);
-                }
+                self.forget();
             }
             Gift::Follow(follow) => self.emission.follow(identity, follow, self.queue.clone()),
         }
@@ -313,18 +361,13 @@ impl World {
 
 impl Tracing<Process> for World {
     fn trace(&mut self, trace: Traced<Process>) {
-        let _ = trace.write_to(&mut self.archive.0);
+        let _ = trace.write_to(&mut self.archive);
         match trace {
-            Trace::Born(living) => {
-                self.signal.bind(&living);
-                if let Process::Watch(watch) = &living.process {
-                    self.watching.push((watch.flow_id.clone(), living.identity.clone()));
-                }
-            }
+            Trace::Born(living) => self.born(&living),
             Trace::Gave(gave) => self.carry(gave),
             Trace::Took(_) => {}
             Trace::Ended(ended) => {
-                self.watching.retain(|(_, identity)| *identity != ended.identity);
+                self.watching.retain(|(_, identity)| identity.as_ref() != Some(&ended.identity));
                 self.signal.close(&ended.identity);
                 self.emission.close(&ended.identity);
             }
@@ -340,31 +383,23 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    if let Err(error) = place.prepare() {
-        eprintln!("{error}");
-        return ExitCode::FAILURE;
-    }
     let (queue, arrivals) = mpsc::channel();
-    let memory = MemoryProcess::open(&place, Count(256));
-    for watch in &memory.remembered.watch_vector {
-        let _ = queue.send(Arrival::Born { owner: None, process: memory.process_of(watch) });
-    }
-    let signal = match SignalProcess::start(&place, queue.clone()) {
-        Ok(signal) => signal,
+    let started = place.prepare().and_then(|()| {
+        let archive = OpenOptions::new().create(true).append(true).open(place.path(Placed::Trace(VERSION)))?;
+        let signal = SignalProcess::start(&place, queue.clone())?;
+        Ok((archive, signal))
+    });
+    let (archive, signal) = match started {
+        Ok(started) => started,
         Err(error) => {
             eprintln!("{error}");
             return ExitCode::FAILURE;
         }
     };
-    let archive = match OpenOptions::new().create(true).append(true).open(place.path(Placed::Trace)) {
-        Ok(file) => Archive(file),
-        Err(error) => {
-            eprintln!("{error}");
-            return ExitCode::FAILURE;
-        }
-    };
+    let memory = MemoryProcess::open(&place);
     let emission = EmissionSocket { place: place.clone(), lasting: BTreeMap::new() };
     let mut world = World { signal, memory, emission, archive, queue, watching: Vec::new() };
+    world.bear_watches();
     ProcessManager::default().run(arrivals, &mut world);
     ExitCode::SUCCESS
 }
