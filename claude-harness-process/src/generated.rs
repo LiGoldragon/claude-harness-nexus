@@ -8,7 +8,7 @@ use core::option::Option;
 use core::result::Result;
 
 use flow::FlowId;
-use harness::{BackgroundWork, EndReason, Event, FilePath, Observed, Response, Session, State, Tokens};
+use harness::{BackgroundWork, Compaction, EndReason, Event, FilePath, Observed, Response, Session, State, Tokens};
 use process::{Givable, Giving, Ownable, Owner, Processable, Unwindable};
 
 macro_rules! generated {
@@ -78,7 +78,7 @@ generated! {
     // Emission
     pub struct Follow { pub file_path: FilePath, pub read_from: ReadFrom, pub row_count: RowCount }
     pub struct Following { pub row_vector: Vec<Row>, pub offset: Offset }
-    pub enum Row { Assistant(Tokens), TurnStarted, TurnEnded, Other }
+    pub enum Row { Assistant(Tokens), TurnStarted, TurnEnded, Interrupted, Compacted(Compaction), Other }
     pub struct Install { pub hook_client: HookClient, pub hooks: Hooks }
     pub enum Installation { Installed(FilePath), Uninstalled(i64) }
     pub enum Emission { Follow(Follow), Install(Install) }

@@ -10,7 +10,7 @@ use std::os::unix::net::UnixStream;
 use std::process::ExitCode;
 
 use claude_harness_process::*;
-use harness::{BackgroundWork, Description, EndReason, FilePath, Response, Session, Tokens, WorkId, WorkKind};
+use harness::{BackgroundWork, Compaction, Description, EndReason, FilePath, Response, Session, Tokens, Trigger, WorkId, WorkKind};
 use rustix::event::{PollFd, PollFlags};
 use rustix::fs::inotify;
 use serde_json::Value;
@@ -87,19 +87,45 @@ impl Translatable for Hook {
     }
 }
 
+/// Claude writes this user row when the user presses Escape mid-turn: a text
+/// item reading "[Request interrupted by user]", or "... for tool use]" when a tool was running.
+fn interrupts(value: &Value) -> bool {
+    value
+        .get("message")
+        .and_then(|message| message.get("content"))
+        .and_then(Value::as_array)
+        .is_some_and(|items| items.iter().any(|item| item.get("text").and_then(Value::as_str).is_some_and(|text| text.starts_with("[Request interrupted by user"))))
+}
+
+/// The compact_boundary system row: its trigger and the context's size before it.
+/// A trigger that is neither manual nor auto is not a compaction this reads.
+fn compaction(value: &Value) -> Option<Compaction> {
+    let metadata = value.get("compactMetadata")?;
+    let trigger = match metadata.get("trigger").and_then(Value::as_str)? {
+        "manual" => Trigger::Manual,
+        "auto" => Trigger::Automatic,
+        _ => return None,
+    };
+    Some(Compaction { trigger, tokens_option: metadata.get("preTokens").and_then(Value::as_i64).map(Tokens) })
+}
+
 impl Translatable for Row {
     /// Of the main thread: an assistant row tells the context's size, the user
-    /// row that carries turnPosition starts a turn, and the stop_hook_summary
-    /// row that did not keep the turn going ends it. Every other row is Other.
+    /// row that carries turnPosition starts a turn, the stop_hook_summary
+    /// row that did not keep the turn going ends it, the user row that reads
+    /// as an interruption is Interrupted, and the compact_boundary row is
+    /// Compacted. Every other row is Other.
     fn translate(line: &str) -> Result<Row, Untranslated> {
         let value: Value = serde_json::from_str(line).map_err(|_| Untranslated::Unreadable)?;
         let main_thread = value.get("isSidechain").and_then(Value::as_bool) != Some(true);
         let usage = value.get("message").and_then(|message| message.get("usage"));
-        let summary = value.get("subtype").and_then(Value::as_str) == Some("stop_hook_summary")
-            && value.get("preventedContinuation").and_then(Value::as_bool) == Some(false);
+        let subtype = value.get("subtype").and_then(Value::as_str);
+        let summary = subtype == Some("stop_hook_summary") && value.get("preventedContinuation").and_then(Value::as_bool) == Some(false);
         Ok(match (value.get("type").and_then(Value::as_str), main_thread, usage) {
+            (Some("user"), true, _) if interrupts(&value) => Row::Interrupted,
             (Some("user"), true, _) if value.get("turnPosition").is_some_and(|position| !position.is_null()) => Row::TurnStarted,
             (Some("system"), true, _) if summary => Row::TurnEnded,
+            (Some("system"), true, _) if subtype == Some("compact_boundary") => compaction(&value).map_or(Row::Other, Row::Compacted),
             (Some("assistant"), true, Some(usage)) => {
                 let tokens = ["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"]
                     .iter()

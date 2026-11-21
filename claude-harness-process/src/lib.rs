@@ -70,6 +70,8 @@ impl Observable for Row {
             Row::Assistant(tokens) => vec![Event::ContextSize(*tokens)],
             Row::TurnStarted => vec![Event::PromptSubmitted],
             Row::TurnEnded => vec![Event::TurnEnded],
+            Row::Interrupted => vec![Event::Interrupted],
+            Row::Compacted(compaction) => vec![Event::Compacted(compaction.clone())],
             Row::Other => vec![],
         }
     }
