@@ -12,31 +12,20 @@ pub use generated::*;
 /// The version of these types: the memory and the trace are named for it.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
 use flow::FlowId;
-use harness::{Event, Observable, Session};
+use harness::{Event, Identifiable, Observable};
 use process::{Giving, Processable};
-
-pub trait Identifiable {
-    fn identify(&self) -> FlowId;
-}
-
-impl Identifiable for Session {
-    fn identify(&self) -> FlowId {
-        FlowId(self.0.chars().take(6).collect::<String>())
-    }
-}
 
 impl Identifiable for Hook {
     fn identify(&self) -> FlowId {
         match self {
-            Hook::SessionStart(start) => start.session.identify(),
+            Hook::SessionStart(start) => start.session_id.identify(),
             Hook::UserPromptSubmit(session) | Hook::PermissionRequest(session) | Hook::PostToolUse(session) => session.identify(),
-            Hook::Stop(stop) => stop.session.identify(),
-            Hook::SessionEnd(end) => end.session.identify(),
+            Hook::Stop(stop) => stop.session_id.identify(),
+            Hook::SessionEnd(end) => end.session_id.identify(),
         }
     }
 }
@@ -44,10 +33,10 @@ impl Identifiable for Hook {
 impl Observable for Hook {
     fn events(&self) -> Vec<Event> {
         match self {
-            // A resume is Resumed, followed by its context's size; Resumed waits on the harness library.
+            // A resume is Resumed, followed by its context's size; a compaction gives no event from the hook.
             Hook::SessionStart(start) => match &start.source {
                 Source::Startup => vec![Event::Started],
-                Source::Resume(tokens) => tokens.iter().copied().map(Event::ContextSize).collect(),
+                Source::Resume(tokens) => core::iter::once(Event::Resumed).chain(tokens.iter().copied().map(Event::ContextSize)).collect(),
                 Source::Compact => vec![],
             },
             Hook::UserPromptSubmit(_) => vec![Event::PromptSubmitted],
@@ -90,7 +79,7 @@ impl Processable for ReportProcess {
                 Source::Startup => ReadFrom::Offset(Offset(0)),
                 Source::Resume(_) | Source::Compact => ReadFrom::FileEnd,
             };
-            manager.give(Watch { flow_id: start.session.identify(), file_path: start.file_path.clone(), read_from });
+            manager.give(Watch { flow_id: start.session_id.identify(), file_path: start.file_path.clone(), read_from });
         }
         manager.give(Observe { flow_id: self.hook.identify(), event_vector: self.hook.events(), offset_option: None });
         None

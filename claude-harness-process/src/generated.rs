@@ -8,7 +8,7 @@ use core::option::Option;
 use core::result::Result;
 
 use flow::FlowId;
-use harness::{BackgroundWork, Compaction, EndReason, Event, FilePath, Observed, Response, Session, State, Tokens};
+use harness::{BackgroundWork, Compaction, EndReason, Event, FilePath, Observed, Response, SessionId, State, Tokens};
 use process::{Givable, Giving, Ownable, Owner, Processable, Unwindable};
 
 macro_rules! generated {
@@ -25,14 +25,14 @@ generated! {
     pub struct UserId(pub i64);
     pub struct Caller { pub process_id: ProcessId, pub user_id: UserId }
     pub enum Source { Startup, Resume(Option<Tokens>), Compact }
-    pub struct SessionStart { pub session: Session, pub file_path: FilePath, pub source: Source }
-    pub struct Stop { pub session: Session, pub response_option: Option<Response>, pub background_work_vector: Vec<BackgroundWork> }
-    pub struct SessionEnd { pub session: Session, pub end_reason: EndReason }
+    pub struct SessionStart { pub session_id: SessionId, pub file_path: FilePath, pub source: Source }
+    pub struct Stop { pub session_id: SessionId, pub response_option: Option<Response>, pub background_work_vector: Vec<BackgroundWork> }
+    pub struct SessionEnd { pub session_id: SessionId, pub end_reason: EndReason }
     pub enum Hook {
         SessionStart(SessionStart),
-        UserPromptSubmit(Session),
-        PermissionRequest(Session),
-        PostToolUse(Session),
+        UserPromptSubmit(SessionId),
+        PermissionRequest(SessionId),
+        PostToolUse(SessionId),
         Stop(Stop),
         SessionEnd(SessionEnd),
     }

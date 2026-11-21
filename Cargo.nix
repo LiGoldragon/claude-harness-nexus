@@ -300,7 +300,7 @@ rec {
       };
       "claude-harness-process" = rec {
         crateName = "claude-harness-process";
-        version = "0.6.0";
+        version = "0.7.0";
         edition = "2024";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./claude-harness-process; };
         libName = "claude_harness_process";
@@ -720,13 +720,13 @@ rec {
       };
       "harness-nexus-library" = rec {
         crateName = "harness-nexus-library";
-        version = "0.1.0";
+        version = "0.3.0";
         edition = "2024";
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/LiGoldragon/harness-nexus-library";
-          rev = "3613d63d0994de7841bcf6f070c83bebb0ddfa5a";
-          sha256 = "0s56yv6vhd8992hbqn277nmdqxmpn2xkvf9szlispr71fmq00k2j";
+          rev = "ae7e008700972b7f033de6ba94c36e6c49fc93f8";
+          sha256 = "0pzack9igg9qh0yb148pl4yy3a0v5ik3208abgd6gcisjsgxpsqb";
         };
         libName = "harness";
         dependencies = [
@@ -1589,13 +1589,13 @@ rec {
       };
       "signal-claude-prepare" = rec {
         crateName = "signal-claude-prepare";
-        version = "0.1.0";
+        version = "0.2.0";
         edition = "2024";
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/LiGoldragon/signal-claude-prepare";
-          rev = "1c1b040f545d4368451894e988073449b4591299";
-          sha256 = "11w0ipf0pbakc9l5z9vqlk2y2dzsrfgwndhx1p7wb475f097bkvw";
+          rev = "3776141276237e2a88bd458ec15b3ccc0396faf9";
+          sha256 = "0j59rj8q0zh75jkv7dzzvyipsq1zz25q18npil213y4k5ssjchwh";
         };
         libName = "signal_claude_prepare";
         dependencies = [
@@ -1629,13 +1629,13 @@ rec {
       };
       "signal-harness" = rec {
         crateName = "signal-harness";
-        version = "0.1.0";
+        version = "0.2.0";
         edition = "2024";
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/LiGoldragon/signal-harness";
-          rev = "eea28159303e9b51e4e211151aba0a3ceb686a32";
-          sha256 = "0jfrvvy3d4804nc8vh5dcbx3qg1akl1y6zkscx6p3hc3qjvhl1am";
+          rev = "f302b3088c719a3df1991b7701899dea7dce7288";
+          sha256 = "16rayxpsnjrl5w7kj1hl3bm1kcsbld66w17pg03lb8hp2lkwrqc6";
         };
         libName = "signal_harness";
         dependencies = [

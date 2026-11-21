@@ -1,5 +1,5 @@
 Signal
-[ harness:[ Session FilePath Response BackgroundWork EndReason Tokens ] ]
+[ harness:[ SessionId FilePath Response BackgroundWork EndReason Tokens ] ]
 [ Report.Hook
   Listening ]
 [ Reported
@@ -7,9 +7,9 @@ Signal
 [ Source.[ Startup
            Resume.Option<Tokens>
            Compact ]
-  Hook.[ SessionStart.{ Session FilePath Source }
-         UserPromptSubmit.Session
-         PermissionRequest.Session
-         PostToolUse.Session
-         Stop.{ Session Option<Response> Vector<BackgroundWork> }
-         SessionEnd.{ Session EndReason } ] ]
+  Hook.[ SessionStart.{ SessionId FilePath Source }
+         UserPromptSubmit.SessionId
+         PermissionRequest.SessionId
+         PostToolUse.SessionId
+         Stop.{ SessionId Option<Response> Vector<BackgroundWork> }
+         SessionEnd.{ SessionId EndReason } ] ]

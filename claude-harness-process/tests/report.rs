@@ -3,7 +3,7 @@
 
 use claude_harness_process::*;
 use flow::FlowId;
-use harness::{Event, Flow, Session, State};
+use harness::{Event, Flow, SessionId, State};
 use process::{Arrival, Gave, Given, Identity, Living, Path, ProcessManager, Root, Roots, Trace, Traced, Tracing};
 
 #[derive(Default)]
@@ -25,7 +25,7 @@ fn caller() -> Caller {
 
 #[test]
 fn a_report_gives_its_answer_and_its_observation_and_ends_observed() {
-    let session = Session("15c0ce0b-1d0c-4c58-9a57-3f1c8f1e15c0".into());
+    let session = SessionId("15c0ce0b-1d0c-4c58-9a57-3f1c8f1e15c0".into());
     let mut manager = ProcessManager::default();
     let mut world = World::default();
 

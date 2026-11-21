@@ -10,7 +10,7 @@ use std::os::unix::net::UnixStream;
 use std::process::ExitCode;
 
 use claude_harness_process::*;
-use harness::{BackgroundWork, Compaction, Description, EndReason, FilePath, Response, Session, Tokens, Trigger, WorkId, WorkKind};
+use harness::{BackgroundWork, Compaction, Description, EndReason, FilePath, Response, SessionId, Tokens, Trigger, WorkId, WorkKind};
 use rustix::event::{PollFd, PollFlags};
 use rustix::fs::inotify;
 use serde_json::Value;
@@ -47,10 +47,10 @@ fn work(task: &Value) -> Result<BackgroundWork, Untranslated> {
 impl Translatable for Hook {
     fn translate(payload: &str) -> Result<Hook, Untranslated> {
         let value: Value = serde_json::from_str(payload).map_err(|_| Untranslated::Unreadable)?;
-        let session = || text(&value, "session_id").map(Session);
+        let session = || text(&value, "session_id").map(SessionId);
         Ok(match text(&value, "hook_event_name")?.as_str() {
             "SessionStart" => Hook::SessionStart(SessionStart {
-                session: session()?,
+                session_id: session()?,
                 file_path: FilePath(text(&value, "transcript_path")?),
                 source: match text(&value, "source").ok().as_deref() {
                     Some("resume") => Source::Resume(value.get("context_tokens").and_then(Value::as_i64).map(Tokens)),
@@ -62,7 +62,7 @@ impl Translatable for Hook {
             "PermissionRequest" => Hook::PermissionRequest(session()?),
             "PostToolUse" => Hook::PostToolUse(session()?),
             "Stop" => Hook::Stop(Stop {
-                session: session()?,
+                session_id: session()?,
                 response_option: text(&value, "last_assistant_message").ok().map(Response),
                 background_work_vector: value
                     .get("background_tasks")
@@ -76,7 +76,7 @@ impl Translatable for Hook {
                     .unwrap_or_default(),
             }),
             "SessionEnd" => Hook::SessionEnd(SessionEnd {
-                session: session()?,
+                session_id: session()?,
                 end_reason: match text(&value, "reason")?.as_str() {
                     "clear" => EndReason::Cleared,
                     _ => EndReason::Exited,
