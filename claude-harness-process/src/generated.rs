@@ -89,8 +89,9 @@ impl Unwindable for Outcome {
     }
 }
 
-impl Processable<Gift> for Process {
+impl Processable for Process {
     type Taken = Taken;
+    type Gift = Gift;
     type Outcome = Outcome;
 
     fn begin<N: Giving<Gift>>(&mut self, giving: N) -> Option<Outcome> {

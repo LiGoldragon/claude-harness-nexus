@@ -64,8 +64,9 @@ impl Observable for Row {
     }
 }
 
-impl Processable<Gift> for ReportProcess {
+impl Processable for ReportProcess {
     type Taken = ReportTaken;
+    type Gift = Gift;
     type Outcome = Reporting;
 
     fn begin<N: Giving<Gift>>(&mut self, mut manager: N) -> Option<Reporting> {
@@ -91,8 +92,9 @@ impl Processable<Gift> for ReportProcess {
     }
 }
 
-impl Processable<Gift> for WatchProcess {
+impl Processable for WatchProcess {
     type Taken = WatchTaken;
+    type Gift = Gift;
     type Outcome = Watching;
 
     fn begin<N: Giving<Gift>>(&mut self, mut manager: N) -> Option<Watching> {

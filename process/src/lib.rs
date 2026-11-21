@@ -57,11 +57,12 @@ pub enum Trace<P, G, T, O> {
 
 /// A process: it begins once, takes each thing that comes for it after, and
 /// yields its outcome when it ends. None is rest.
-pub trait Processable<Gift> {
+pub trait Processable {
     type Taken;
+    type Gift;
     type Outcome;
-    fn begin<N: Giving<Gift>>(&mut self, giving: N) -> Option<Self::Outcome>;
-    fn take<N: Giving<Gift>>(&mut self, taken: Self::Taken, giving: N) -> Option<Self::Outcome>;
+    fn begin<N: Giving<Self::Gift>>(&mut self, giving: N) -> Option<Self::Outcome>;
+    fn take<N: Giving<Self::Gift>>(&mut self, taken: Self::Taken, giving: N) -> Option<Self::Outcome>;
 }
 
 /// What a process is handed to give with. To give is to move.
@@ -129,7 +130,7 @@ where
 
 impl<P, G, T, O> ProcessManager<P>
 where
-    P: Processable<G, Taken = T, Outcome = O> + Clone,
+    P: Processable<Taken = T, Gift = G, Outcome = O> + Clone,
     T: Clone,
     O: Unwindable,
 {
