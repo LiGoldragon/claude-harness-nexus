@@ -1,0 +1,21 @@
+Process
+[ claude_harness:signal:[ Report Subscribe Reported Subscribed Changed ]
+  claude_harness:meta:[ Configure Configured ]
+  claude_harness:memory:[ Watch Observe Recall Count ]
+  claude_harness:emission:[ Follow ] ]
+[ Report.{ []
+           [ Reported Watch Observe Changed ]
+           Reporting }
+  Watch.{ [ Count ]
+          [ Follow Observe Changed ]
+          Watching }
+  Subscribe.{ []
+              [ Recall Subscribed ]
+              Subscribing }
+  Configure.{ []
+              [ Configure Configured ]
+              Configuring } ]
+[ Reporting.[ Observed Unremembered ]
+  Watching.[ Missing Unfollowed Forgotten ]
+  Subscribing.[ Closed ]
+  Configuring.[ Configured Unremembered ] ]

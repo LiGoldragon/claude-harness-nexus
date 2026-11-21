@@ -1,0 +1,15 @@
+Memory
+[ harness:[ FilePath Event Observed ]
+  flow:[ FlowId ]
+  claude_harness:signal:[ Changed ]
+  claude_harness:meta:[ Set ] ]
+[ Watch.{ FlowId FilePath Offset }
+  Observed
+  Count ]
+[ Observe.{ FlowId Vector<Event> Option<Offset> }
+  Configure.Set
+  Recall ]
+[ Observation.Vector<Changed>
+  Recollection.Vector<Observed> ]
+[ Offset.Integer
+  Count.Integer ]

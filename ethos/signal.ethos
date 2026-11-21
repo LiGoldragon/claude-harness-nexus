@@ -1,0 +1,14 @@
+Signal
+[ harness:[ Session FilePath Response BackgroundWork EndReason Event State Observed ]
+  flow:[ FlowId ] ]
+[ Report.Hook
+  Subscribe ]
+[ Reported
+  Subscribed.Vector<Observed>
+  Changed.{ FlowId Event State } ]
+[ Hook.[ SessionStart.{ Session FilePath }
+         UserPromptSubmit.Session
+         PermissionRequest.Session
+         PostToolUse.Session
+         Stop.{ Session Option<Response> Vector<BackgroundWork> }
+         SessionEnd.{ Session EndReason } ] ]
