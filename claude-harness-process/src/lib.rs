@@ -58,7 +58,7 @@ impl Observable for Hook {
 impl Observable for Row {
     fn events(&self) -> Vec<Event> {
         match self {
-            Row::Assistant(tokens) => vec![Event::ContextSize(tokens.clone())],
+            Row::Assistant(tokens) => vec![Event::ContextSize(*tokens)],
             Row::Other => vec![],
         }
     }

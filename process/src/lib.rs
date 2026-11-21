@@ -2,7 +2,7 @@
 //! given one thing at a time, and it gives.
 //!
 //! Nothing here waits. What waits, the queue, the sockets and the disk, is the
-//! world the manager is handed: the Queue it takes from and the Tracing it
+//! world the manager is handed: the queue it iterates and the Tracing it
 //! writes every birth, gift, taking and end into.
 
 #![no_std]
@@ -80,21 +80,19 @@ pub trait Unwindable {
     fn unwound() -> Self;
 }
 
+/// The trace of one Nexus's processes.
+pub type Traced<P> = Trace<P, <P as Processable>::Gift, <P as Processable>::Taken, <P as Processable>::Outcome>;
+
 /// What the queue yields: a process to be born, or a thing for a living one.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Arrival<P, T> {
+pub enum Arrival<P: Processable> {
     Born { owner: Option<Identity>, process: P },
-    Given(Given<T>),
-}
-
-/// The manager's one queue; next waits for the next thing, and None ends the run.
-pub trait Queue<P, T> {
-    fn next(&mut self) -> Option<Arrival<P, T>>;
+    Given(Given<P::Taken>),
 }
 
 /// Where the trace goes: every gift is carried from here, every end announced.
-pub trait Tracing<P, G, T, O> {
-    fn trace(&mut self, trace: Trace<P, G, T, O>);
+pub trait Tracing<P: Processable> {
+    fn trace(&mut self, trace: Traced<P>);
 }
 
 struct Entry<P> {
@@ -113,33 +111,29 @@ impl<P> Default for ProcessManager<P> {
     }
 }
 
-struct Giver<'a, W, P, T, O> {
+/// What a body is handed: the world, bound to the identity of the process.
+struct Giver<'a, W, P> {
     identity: &'a Identity,
     world: &'a mut W,
-    traced: PhantomData<fn() -> (P, T, O)>,
+    process: PhantomData<fn() -> P>,
 }
 
-impl<P, G, T, O, W> Giving<G> for Giver<'_, W, P, T, O>
-where
-    W: Tracing<P, G, T, O>,
-{
-    fn give<N: Givable + Into<G>>(&mut self, gift: N) {
+impl<P: Processable, W: Tracing<P>> Giving<P::Gift> for Giver<'_, W, P> {
+    fn give<N: Givable + Into<P::Gift>>(&mut self, gift: N) {
         self.world.trace(Trace::Gave(Gave { identity: self.identity.clone(), gift: gift.into() }));
     }
 }
 
-impl<P, G, T, O> ProcessManager<P>
+impl<P> ProcessManager<P>
 where
-    P: Processable<Taken = T, Gift = G, Outcome = O> + Clone,
-    T: Clone,
-    O: Unwindable,
+    P: Processable + Clone,
+    P::Taken: Clone,
+    P::Outcome: Unwindable,
 {
-    pub fn run<Q, W>(&mut self, queue: &mut Q, world: &mut W)
-    where
-        Q: Queue<P, T>,
-        W: Tracing<P, G, T, O>,
-    {
-        while let Some(arrival) = queue.next() {
+    /// The manager's one queue is any iterator of arrivals: its next waits for
+    /// the next thing, and its end ends every process.
+    pub fn run<Q: IntoIterator<Item = Arrival<P>>, W: Tracing<P>>(&mut self, queue: Q, world: &mut W) {
+        for arrival in queue {
             match arrival {
                 Arrival::Born { owner, process } => self.bear(owner, process, world),
                 Arrival::Given(given) => self.hand(given, world),
@@ -148,7 +142,7 @@ where
         self.end_all(world);
     }
 
-    pub fn bear<W: Tracing<P, G, T, O>>(&mut self, owner: Option<Identity>, process: P, world: &mut W) {
+    pub fn bear<W: Tracing<P>>(&mut self, owner: Option<Identity>, process: P, world: &mut W) {
         let identity = match owner {
             None => {
                 self.roots += 1;
@@ -166,7 +160,7 @@ where
         };
         world.trace(Trace::Born(Living { identity: identity.clone(), process: process.clone() }));
         let mut living = Living { identity, process };
-        let outcome = living.process.begin(Giver { identity: &living.identity, world: &mut *world, traced: PhantomData });
+        let outcome = living.process.begin(Giver { identity: &living.identity, world: &mut *world, process: PhantomData });
         let identity = living.identity.clone();
         self.table.push(Entry { living, born: 0 });
         if let Some(outcome) = outcome {
@@ -174,29 +168,31 @@ where
         }
     }
 
-    pub fn hand<W: Tracing<P, G, T, O>>(&mut self, given: Given<T>, world: &mut W) {
+    /// Hands a thing to the process it is for; a thing for an ended process is let go.
+    pub fn hand<W: Tracing<P>>(&mut self, given: Given<P::Taken>, world: &mut W) {
         let Some(entry) = self.table.iter_mut().find(|entry| entry.living.identity == given.identity) else {
             return;
         };
         world.trace(Trace::Took(given.clone()));
         let living = &mut entry.living;
-        if let Some(outcome) = living.process.take(given.taken, Giver { identity: &living.identity, world: &mut *world, traced: PhantomData }) {
+        let giver = Giver { identity: &living.identity, world: &mut *world, process: PhantomData };
+        if let Some(outcome) = living.process.take(given.taken, giver) {
             self.end(given.identity, outcome, world);
         }
     }
 
     /// A reverse unwind: what the process owns ends first, the last born first.
-    pub fn end<W: Tracing<P, G, T, O>>(&mut self, identity: Identity, outcome: O, world: &mut W) {
+    pub fn end<W: Tracing<P>>(&mut self, identity: Identity, outcome: P::Outcome, world: &mut W) {
         let owned: Vec<Identity> = self.owned_by(&identity).collect();
         for owned in owned.into_iter().rev() {
-            self.end(owned, O::unwound(), world);
+            self.end(owned, P::Outcome::unwound(), world);
         }
         self.table.retain(|entry| entry.living.identity != identity);
         world.trace(Trace::Ended(Ended { identity, outcome }));
     }
 
     /// Every living process, ended the last born first.
-    pub fn end_all<W: Tracing<P, G, T, O>>(&mut self, world: &mut W) {
+    pub fn end_all<W: Tracing<P>>(&mut self, world: &mut W) {
         let roots: Vec<Identity> = self
             .table
             .iter()
@@ -204,15 +200,19 @@ where
             .filter(|identity| identity.path.0.is_empty())
             .collect();
         for root in roots.into_iter().rev() {
-            self.end(root, O::unwound(), world);
+            self.end(root, P::Outcome::unwound(), world);
         }
     }
 
     fn owned_by<'a>(&'a self, owner: &'a Identity) -> impl Iterator<Item = Identity> + 'a {
-        self.table.iter().map(|entry| &entry.living.identity).filter(move |identity| {
-            identity.root == owner.root
-                && identity.path.0.len() == owner.path.0.len() + 1
-                && identity.path.0.starts_with(&owner.path.0)
-        }).cloned()
+        self.table
+            .iter()
+            .map(|entry| &entry.living.identity)
+            .filter(move |identity| {
+                identity.root == owner.root
+                    && identity.path.0.len() == owner.path.0.len() + 1
+                    && identity.path.0.starts_with(&owner.path.0)
+            })
+            .cloned()
     }
 }
