@@ -122,3 +122,22 @@ impl Processable for WatchProcess {
         }
     }
 }
+
+impl Processable for SubscribeProcess {
+    type Taken = SubscribeTaken;
+    type Gift = Gift;
+    type Outcome = Subscribing;
+
+    fn begin<N: Giving<Gift>>(&mut self, mut manager: N) -> Option<Subscribing> {
+        manager.give(Recall);
+        None
+    }
+
+    /// It answers with every session as it is now, then rests while its connection is open.
+    fn take<N: Giving<Gift>>(&mut self, taken: SubscribeTaken, mut manager: N) -> Option<Subscribing> {
+        match taken {
+            SubscribeTaken::Recollection(recollection) => manager.give(Subscribed(recollection.0)),
+        }
+        None
+    }
+}

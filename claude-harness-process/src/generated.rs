@@ -38,7 +38,8 @@ generated! {
     pub struct Changed { pub flow_id: FlowId, pub event: Event, pub state: State }
     pub enum Input { Report(Hook), Subscribe }
     pub struct Call { pub caller: Caller, pub input: Input }
-    pub enum Output { Reported(Reported), Subscribed(Vec<Observed>), Changed(Changed) }
+    pub struct Subscribed(pub Vec<Observed>);
+    pub enum Output { Reported(Reported), Subscribed(Subscribed), Changed(Changed) }
 
     // Memory
     pub struct Offset(pub i64);
@@ -47,6 +48,8 @@ generated! {
     pub struct Observe { pub flow_id: FlowId, pub event_vector: Vec<Event>, pub offset_option: Option<Offset> }
     pub struct Observation(pub Vec<Changed>);
     pub enum Answer { Succeeded, Failed }
+    pub struct Recall;
+    pub struct Recollection(pub Vec<Observed>);
 
     // Emission
     pub struct Follow { pub file_path: FilePath, pub offset: Offset, pub count: Count }
@@ -62,12 +65,15 @@ generated! {
     pub enum WatchTaken { Following(Result<Following, Unobserved>), Observation(Observation) }
     pub enum Reporting { Observed, Unremembered }
     pub enum Watching { Missing, Unfollowed, Forgotten }
+    pub struct SubscribeProcess { pub caller: Caller }
+    pub enum SubscribeTaken { Recollection(Recollection) }
+    pub enum Subscribing { Closed }
 
     // The enums over the Nexus's processes
-    pub enum Process { Report(ReportProcess), Watch(WatchProcess) }
-    pub enum Gift { Reported(Reported), Changed(Changed), Watch(Watch), Observe(Observe), Follow(Follow) }
-    pub enum Taken { Answer(Answer), Observation(Observation), Following(Result<Following, Unobserved>) }
-    pub enum Outcome { Reporting(Reporting), Watching(Watching), Unwound }
+    pub enum Process { Report(ReportProcess), Watch(WatchProcess), Subscribe(SubscribeProcess) }
+    pub enum Gift { Reported(Reported), Subscribed(Subscribed), Changed(Changed), Watch(Watch), Observe(Observe), Recall(Recall), Follow(Follow) }
+    pub enum Taken { Answer(Answer), Observation(Observation), Recollection(Recollection), Following(Result<Following, Unobserved>) }
+    pub enum Outcome { Reporting(Reporting), Watching(Watching), Subscribing(Subscribing), Unwound }
 }
 
 macro_rules! givable {
@@ -79,6 +85,8 @@ macro_rules! givable {
 
 givable! {
     Reported => (),
+    Subscribed => (),
+    Recall => Recollection,
     Changed => (),
     Watch => Answer,
     Observe => Observation,
@@ -100,6 +108,7 @@ impl Processable for Process {
         match self {
             Process::Report(report) => report.begin(giving).map(Outcome::Reporting),
             Process::Watch(watch) => watch.begin(giving).map(Outcome::Watching),
+            Process::Subscribe(subscribe) => subscribe.begin(giving).map(Outcome::Subscribing),
         }
     }
 
@@ -109,6 +118,7 @@ impl Processable for Process {
             (Process::Report(report), Taken::Observation(observation)) => report.take(ReportTaken::Observation(observation), giving).map(Outcome::Reporting),
             (Process::Watch(watch), Taken::Following(following)) => watch.take(WatchTaken::Following(following), giving).map(Outcome::Watching),
             (Process::Watch(watch), Taken::Observation(observation)) => watch.take(WatchTaken::Observation(observation), giving).map(Outcome::Watching),
+            (Process::Subscribe(subscribe), Taken::Recollection(recollection)) => subscribe.take(SubscribeTaken::Recollection(recollection), giving).map(Outcome::Subscribing),
             _ => None,
         }
     }

@@ -111,10 +111,18 @@ impl MemoryProcess {
     }
 }
 
+/// A subscriber's connection holds what changed until its Subscribed is written.
+struct Subscription {
+    pending: Vec<Output>,
+    answered: bool,
+}
+
 /// The signal process: what enters the program and what leaves it.
 struct SignalProcess {
     arrived: Arc<Mutex<VecDeque<UnixStream>>>,
     connections: BTreeMap<Identity, UnixStream>,
+    subscriptions: BTreeMap<Identity, Subscription>,
+    queue: Queue,
 }
 
 impl SignalProcess {
@@ -124,31 +132,39 @@ impl SignalProcess {
         let listener = UnixListener::bind(&path)?;
         let arrived = Arc::new(Mutex::new(VecDeque::new()));
         let held = arrived.clone();
+        let calling = queue.clone();
         thread::spawn(move || {
             for mut stream in listener.incoming().flatten() {
                 let Ok(Some(call)) = Call::read_from(&mut stream) else { continue };
-                match call.input {
-                    Input::Report(hook) => {
-                        held.lock().expect("the arrived connections").push_back(stream);
-                        let process = Process::Report(ReportProcess { caller: call.caller, hook });
-                        if queue.send(Arrival::Born { owner: None, process }).is_err() {
-                            return;
-                        }
-                    }
-                    Input::Subscribe => {}
+                let process = match call.input {
+                    Input::Report(hook) => Process::Report(ReportProcess { caller: call.caller, hook }),
+                    Input::Subscribe => Process::Subscribe(SubscribeProcess { caller: call.caller }),
+                };
+                held.lock().expect("the arrived connections").push_back(stream);
+                if calling.send(Arrival::Born { owner: None, process }).is_err() {
+                    return;
                 }
             }
         });
-        Ok(SignalProcess { arrived, connections: BTreeMap::new() })
+        Ok(SignalProcess { arrived, connections: BTreeMap::new(), subscriptions: BTreeMap::new(), queue })
     }
 
     /// A call's process takes the connection it came on: births come in the order the calls did.
+    /// A subscriber's process ends when its connection closes.
     fn bind(&mut self, living: &Living<Process>) {
-        if let Process::Report(_) = living.process
-            && let Some(stream) = self.arrived.lock().expect("the arrived connections").pop_front()
-        {
-            self.connections.insert(living.identity.clone(), stream);
+        if let Process::Watch(_) = living.process {
+            return;
         }
+        let Some(stream) = self.arrived.lock().expect("the arrived connections").pop_front() else { return };
+        if let (Process::Subscribe(_), Ok(mut closing)) = (&living.process, stream.try_clone()) {
+            let identity = living.identity.clone();
+            let queue = self.queue.clone();
+            thread::spawn(move || {
+                let _ = std::io::copy(&mut closing, &mut std::io::sink());
+                let _ = queue.send(Arrival::Ended(Ended { identity, outcome: Outcome::Subscribing(Subscribing::Closed) }));
+            });
+        }
+        self.connections.insert(living.identity.clone(), stream);
     }
 
     fn answer(&mut self, identity: &Identity, output: Output) {
@@ -157,8 +173,39 @@ impl SignalProcess {
         }
     }
 
+    /// From the moment its recollection is taken, a subscriber misses nothing.
+    fn subscribe(&mut self, identity: &Identity) {
+        self.subscriptions.insert(identity.clone(), Subscription { pending: Vec::new(), answered: false });
+    }
+
+    fn subscribed(&mut self, identity: &Identity, output: Output) {
+        self.answer(identity, output);
+        if let Some(subscription) = self.subscriptions.get_mut(identity) {
+            subscription.answered = true;
+            for output in std::mem::take(&mut subscription.pending) {
+                if let Some(stream) = self.connections.get_mut(identity) {
+                    let _ = output.write_to(stream);
+                }
+            }
+        }
+    }
+
+    fn publish(&mut self, output: Output) {
+        for (identity, subscription) in self.subscriptions.iter_mut() {
+            match (subscription.answered, self.connections.get_mut(identity)) {
+                (true, Some(stream)) => {
+                    let _ = output.write_to(stream);
+                }
+                _ => subscription.pending.push(output.clone()),
+            }
+        }
+    }
+
     fn close(&mut self, identity: &Identity) {
-        self.connections.remove(identity);
+        self.subscriptions.remove(identity);
+        if let Some(stream) = self.connections.remove(identity) {
+            let _ = stream.shutdown(std::net::Shutdown::Both);
+        }
     }
 }
 
@@ -237,7 +284,13 @@ impl World {
     fn carry(&mut self, Gave { identity, gift }: Gave<Gift>) {
         match gift {
             Gift::Reported(reported) => self.signal.answer(&identity, Output::Reported(reported)),
-            Gift::Changed(_) => {}
+            Gift::Subscribed(subscribed) => self.signal.subscribed(&identity, Output::Subscribed(subscribed)),
+            Gift::Changed(changed) => self.signal.publish(Output::Changed(changed)),
+            Gift::Recall(Recall) => {
+                self.signal.subscribe(&identity);
+                let recollection = Recollection(self.memory.remembered.observed_vector.clone());
+                self.give_back(identity, Taken::Recollection(recollection));
+            }
             Gift::Watch(watch) => {
                 let (answer, born) = self.memory.watch(watch);
                 self.give_back(identity, Taken::Answer(answer));
