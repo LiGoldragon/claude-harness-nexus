@@ -1,7 +1,8 @@
 //! The processes of the Claude Harness Nexus: a hook's report and a
 //! transcript's watch. Built with no operating system under it.
 
-#![no_std]
+// The text side, where datom is spoken, is built with std; the Nexus's build is not.
+#![cfg_attr(not(feature = "datom"), no_std)]
 extern crate alloc;
 
 mod generated;

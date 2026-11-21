@@ -5,7 +5,8 @@
 //! world the manager is handed: the queue it iterates and the Tracing it
 //! writes every birth, gift, taking and end into.
 
-#![no_std]
+// The text side, where datom is spoken, is built with std; the Nexus's build is not.
+#![cfg_attr(not(feature = "datom"), no_std)]
 extern crate alloc;
 
 use alloc::vec::Vec;

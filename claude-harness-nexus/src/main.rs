@@ -156,13 +156,13 @@ struct EmissionSocket {
 
 impl EmissionSocket {
     fn follow(&mut self, identity: Identity, follow: Follow, queue: Queue) {
-        let given = |taken| Arrival::Given(Given { identity: identity.clone(), taken: Taken::Following(taken) });
+        let given = move |identity: &Identity, taken| Arrival::Given(Given { identity: identity.clone(), taken: Taken::Following(taken) });
         let Ok(mut stream) = UnixStream::connect(self.place.path(Placed::EmissionSocket)) else {
-            let _ = queue.send(given(Err(Unobserved::Unsubmitted)));
+            let _ = queue.send(given(&identity, Err(Unobserved::Unsubmitted)));
             return;
         };
         if follow.write_to(&mut stream).is_err() {
-            let _ = queue.send(given(Err(Unobserved::Unsubmitted)));
+            let _ = queue.send(given(&identity, Err(Unobserved::Unsubmitted)));
             return;
         }
         let Ok(mut reading) = stream.try_clone() else { return };
@@ -171,12 +171,12 @@ impl EmissionSocket {
             loop {
                 match Following::read_from(&mut reading) {
                     Ok(Some(following)) => {
-                        if queue.send(given(Ok(following))).is_err() {
+                        if queue.send(given(&identity, Ok(following))).is_err() {
                             return;
                         }
                     }
                     _ => {
-                        let _ = queue.send(given(Err(Unobserved::Unanswered)));
+                        let _ = queue.send(given(&identity, Err(Unobserved::Unanswered)));
                         return;
                     }
                 }
