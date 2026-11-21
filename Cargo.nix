@@ -339,6 +339,11 @@ rec {
         edition = "2024";
         crateBin = [
           {
+            name = "claude-harness";
+            path = "src/bin/claude-harness.rs";
+            requiredFeatures = [ ];
+          }
+          {
             name = "claude-harness-hook";
             path = "src/bin/claude-harness-hook.rs";
             requiredFeatures = [ ];
