@@ -43,6 +43,16 @@ rec {
   # You can override the features with
   # workspaceMembers."${crateName}".build.override { features = [ "default" "feature1" ... ]; }.
   workspaceMembers = {
+    "claude-harness-nexus" = rec {
+      packageId = "claude-harness-nexus";
+      build = internal.buildRustCrateWithFeatures {
+        packageId = "claude-harness-nexus";
+      };
+
+      # Debug support which might change between releases.
+      # File a bug if you depend on any for non-debug work!
+      debug = internal.debugCrate { inherit packageId; };
+    };
     "claude-harness-process" = rec {
       packageId = "claude-harness-process";
       build = internal.buildRustCrateWithFeatures {
@@ -53,10 +63,30 @@ rec {
       # File a bug if you depend on any for non-debug work!
       debug = internal.debugCrate { inherit packageId; };
     };
+    "claude-harness-translator" = rec {
+      packageId = "claude-harness-translator";
+      build = internal.buildRustCrateWithFeatures {
+        packageId = "claude-harness-translator";
+      };
+
+      # Debug support which might change between releases.
+      # File a bug if you depend on any for non-debug work!
+      debug = internal.debugCrate { inherit packageId; };
+    };
     "process" = rec {
       packageId = "process";
       build = internal.buildRustCrateWithFeatures {
         packageId = "process";
+      };
+
+      # Debug support which might change between releases.
+      # File a bug if you depend on any for non-debug work!
+      debug = internal.debugCrate { inherit packageId; };
+    };
+    "transport" = rec {
+      packageId = "transport";
+      build = internal.buildRustCrateWithFeatures {
+        packageId = "transport";
       };
 
       # Debug support which might change between releases.
@@ -91,6 +121,22 @@ rec {
     #   inject test dependencies into the build
 
     crates = {
+      "bitflags" = rec {
+        crateName = "bitflags";
+        version = "2.13.2";
+        edition = "2021";
+        sha256 = "01hbgjwvid66850fzi76mvn5f2bqycx6sf165ng1kfjqq9bl1v9x";
+        authors = [
+          "The Rust Project Developers"
+        ];
+        features = {
+          "arbitrary" = [ "dep:arbitrary" ];
+          "bytemuck" = [ "dep:bytemuck" ];
+          "serde" = [ "serde_core" ];
+          "serde_core" = [ "dep:serde_core" ];
+        };
+        resolvedDefaultFeatures = [ "std" ];
+      };
       "bumpalo" = rec {
         crateName = "bumpalo";
         version = "3.20.3";
@@ -203,6 +249,45 @@ rec {
           "rustc-dep-of-std" = [ "core" ];
         };
       };
+      "claude-harness-nexus" = rec {
+        crateName = "claude-harness-nexus";
+        version = "0.1.0";
+        edition = "2024";
+        crateBin = [
+          {
+            name = "claude-harness-nexus";
+            path = "src/main.rs";
+            requiredFeatures = [ ];
+          }
+        ];
+        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./claude-harness-nexus; };
+        dependencies = [
+          {
+            name = "claude-harness-process";
+            packageId = "claude-harness-process";
+          }
+          {
+            name = "harness-nexus-library";
+            packageId = "harness-nexus-library";
+            rename = "harness";
+          }
+          {
+            name = "process";
+            packageId = "process";
+          }
+          {
+            name = "rkyv";
+            packageId = "rkyv";
+            usesDefaultFeatures = false;
+            features = [ "alloc" "bytecheck" "little_endian" "pointer_width_32" "unaligned" ];
+          }
+          {
+            name = "transport";
+            packageId = "transport";
+          }
+        ];
+
+      };
       "claude-harness-process" = rec {
         crateName = "claude-harness-process";
         version = "0.1.0";
@@ -210,6 +295,11 @@ rec {
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./claude-harness-process; };
         libName = "claude_harness_process";
         dependencies = [
+          {
+            name = "datom-codec";
+            packageId = "datom-codec";
+            optional = true;
+          }
           {
             name = "flow-ethos";
             packageId = "flow-ethos";
@@ -230,6 +320,73 @@ rec {
             packageId = "rkyv";
             usesDefaultFeatures = false;
             features = [ "alloc" "bytecheck" "little_endian" "pointer_width_32" "unaligned" ];
+          }
+        ];
+        features = {
+          "datom" = [ "dep:datom-codec" "process/datom" "harness/datom" "flow/datom" ];
+        };
+        resolvedDefaultFeatures = [ "datom" "default" ];
+      };
+      "claude-harness-translator" = rec {
+        crateName = "claude-harness-translator";
+        version = "0.1.0";
+        edition = "2024";
+        crateBin = [
+          {
+            name = "claude-harness-hook";
+            path = "src/bin/claude-harness-hook.rs";
+            requiredFeatures = [ ];
+          }
+          {
+            name = "claude-harness-trace";
+            path = "src/bin/claude-harness-trace.rs";
+            requiredFeatures = [ ];
+          }
+          {
+            name = "claude-harness-translator";
+            path = "src/main.rs";
+            requiredFeatures = [ ];
+          }
+        ];
+        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./claude-harness-translator; };
+        libName = "claude_harness_translator";
+        dependencies = [
+          {
+            name = "claude-harness-process";
+            packageId = "claude-harness-process";
+            features = [ "datom" ];
+          }
+          {
+            name = "datom-codec";
+            packageId = "datom-codec";
+          }
+          {
+            name = "harness-nexus-library";
+            packageId = "harness-nexus-library";
+            rename = "harness";
+            features = [ "datom" ];
+          }
+          {
+            name = "process";
+            packageId = "process";
+            features = [ "datom" ];
+          }
+          {
+            name = "protos";
+            packageId = "protos";
+          }
+          {
+            name = "rustix";
+            packageId = "rustix";
+            features = [ "net" "fs" "event" ];
+          }
+          {
+            name = "serde_json";
+            packageId = "serde_json";
+          }
+          {
+            name = "transport";
+            packageId = "transport";
           }
         ];
 
@@ -304,6 +461,47 @@ rec {
         sha256 = "03swzqznragy8n0x31lqc78g2af054jwivp7lkrbrc0khz74lyl7";
 
       };
+      "errno" = rec {
+        crateName = "errno";
+        version = "0.3.14";
+        edition = "2018";
+        sha256 = "1szgccmh8vgryqyadg8xd58mnwwicf39zmin3bsn63df2wbbgjir";
+        authors = [
+          "Chris Wong <lambda.fairy@gmail.com>"
+          "Dan Gohman <dev@sunfishcode.online>"
+        ];
+        dependencies = [
+          {
+            name = "libc";
+            packageId = "libc";
+            usesDefaultFeatures = false;
+            target = { target, features }: ("hermit" == target."os" or null);
+          }
+          {
+            name = "libc";
+            packageId = "libc";
+            usesDefaultFeatures = false;
+            target = { target, features }: ("wasi" == target."os" or null);
+          }
+          {
+            name = "libc";
+            packageId = "libc";
+            usesDefaultFeatures = false;
+            target = { target, features }: (target."unix" or false);
+          }
+          {
+            name = "windows-sys";
+            packageId = "windows-sys";
+            target = { target, features }: (target."windows" or false);
+            features = [ "Win32_Foundation" "Win32_System_Diagnostics_Debug" ];
+          }
+        ];
+        features = {
+          "default" = [ "std" ];
+          "std" = [ "libc/std" ];
+        };
+        resolvedDefaultFeatures = [ "std" ];
+      };
       "ethos-zero" = rec {
         crateName = "ethos-zero";
         version = "22.0.0";
@@ -369,6 +567,16 @@ rec {
         libName = "flow_ethos";
         dependencies = [
           {
+            name = "datom-codec";
+            packageId = "datom-codec";
+            optional = true;
+          }
+          {
+            name = "protos";
+            packageId = "protos";
+            optional = true;
+          }
+          {
             name = "rkyv";
             packageId = "rkyv";
             usesDefaultFeatures = false;
@@ -384,6 +592,7 @@ rec {
         features = {
           "datom" = [ "dep:datom-codec" "dep:protos" ];
         };
+        resolvedDefaultFeatures = [ "datom" ];
       };
       "futures-core" = rec {
         crateName = "futures-core";
@@ -480,10 +689,20 @@ rec {
         libName = "harness";
         dependencies = [
           {
+            name = "datom-codec";
+            packageId = "datom-codec";
+            optional = true;
+          }
+          {
             name = "flow-ethos";
             packageId = "flow-ethos";
             rename = "flow";
             usesDefaultFeatures = false;
+          }
+          {
+            name = "protos";
+            packageId = "protos";
+            optional = true;
           }
           {
             name = "rkyv";
@@ -495,7 +714,7 @@ rec {
         features = {
           "datom" = [ "dep:datom-codec" "dep:protos" "flow/datom" ];
         };
-        resolvedDefaultFeatures = [ "default" ];
+        resolvedDefaultFeatures = [ "datom" "default" ];
       };
       "hashbrown" = rec {
         crateName = "hashbrown";
@@ -543,6 +762,18 @@ rec {
         };
         resolvedDefaultFeatures = [ "std" ];
       };
+      "itoa" = rec {
+        crateName = "itoa";
+        version = "1.0.19";
+        edition = "2021";
+        sha256 = "1m44ca6ihrapjhlfy1vn4zj207qyhizbv0c1iwgnr6ksc575gl9v";
+        authors = [
+          "David Tolnay <dtolnay@gmail.com>"
+        ];
+        features = {
+          "no-panic" = [ "dep:no-panic" ];
+        };
+      };
       "js-sys" = rec {
         crateName = "js-sys";
         version = "0.3.105";
@@ -575,6 +806,54 @@ rec {
           "std" = [ "wasm-bindgen/std" "futures-util/std" ];
         };
         resolvedDefaultFeatures = [ "std" ];
+      };
+      "libc" = rec {
+        crateName = "libc";
+        version = "0.2.189";
+        edition = "2021";
+        sha256 = "1whjfs375vlng2q6yrbzs73cvp5lm3w1n2gfqajb2vgf7zg3xbry";
+        features = {
+          "default" = [ "std" ];
+          "rustc-dep-of-std" = [ "align" "rustc-std-workspace-core" ];
+          "rustc-std-workspace-core" = [ "dep:rustc-std-workspace-core" ];
+          "use_std" = [ "std" ];
+        };
+        resolvedDefaultFeatures = [ "std" ];
+      };
+      "linux-raw-sys" = rec {
+        crateName = "linux-raw-sys";
+        version = "0.12.1";
+        edition = "2021";
+        sha256 = "0lwasljrqxjjfk9l2j8lyib1babh2qjlnhylqzl01nihw14nk9ij";
+        libName = "linux_raw_sys";
+        authors = [
+          "Dan Gohman <dev@sunfishcode.online>"
+        ];
+        features = {
+          "core" = [ "dep:core" ];
+          "default" = [ "std" "general" "errno" ];
+          "rustc-dep-of-std" = [ "core" "no_std" ];
+        };
+        resolvedDefaultFeatures = [ "auxvec" "elf" "errno" "general" "if_ether" "ioctl" "net" "netlink" "no_std" "xdp" ];
+      };
+      "memchr" = rec {
+        crateName = "memchr";
+        version = "2.8.3";
+        edition = "2021";
+        sha256 = "161xa63ipfanf8v3nb82xd5hqgydv55nzw59wyngqbz6alfaz2yg";
+        authors = [
+          "Andrew Gallant <jamslam@gmail.com>"
+          "bluss"
+        ];
+        features = {
+          "core" = [ "dep:core" ];
+          "default" = [ "std" ];
+          "logging" = [ "dep:log" ];
+          "rustc-dep-of-std" = [ "core" ];
+          "std" = [ "alloc" ];
+          "use_std" = [ "std" ];
+        };
+        resolvedDefaultFeatures = [ "alloc" "std" ];
       };
       "munge" = rec {
         crateName = "munge";
@@ -715,13 +994,21 @@ rec {
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./process; };
         dependencies = [
           {
+            name = "datom-codec";
+            packageId = "datom-codec";
+            optional = true;
+          }
+          {
             name = "rkyv";
             packageId = "rkyv";
             usesDefaultFeatures = false;
             features = [ "alloc" "bytecheck" "little_endian" "pointer_width_32" "unaligned" ];
           }
         ];
-
+        features = {
+          "datom" = [ "dep:datom-codec" ];
+        };
+        resolvedDefaultFeatures = [ "datom" "default" ];
       };
       "protos" = rec {
         crateName = "protos";
@@ -997,6 +1284,113 @@ rec {
         };
         resolvedDefaultFeatures = [ "bytecheck" ];
       };
+      "rustix" = rec {
+        crateName = "rustix";
+        version = "1.1.4";
+        edition = "2021";
+        sha256 = "14511f9yjqh0ix07xjrjpllah3325774gfwi9zpq72sip5jlbzmn";
+        authors = [
+          "Dan Gohman <dev@sunfishcode.online>"
+          "Jakub Konka <kubkon@jakubkonka.com>"
+        ];
+        dependencies = [
+          {
+            name = "bitflags";
+            packageId = "bitflags";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "errno";
+            packageId = "errno";
+            rename = "libc_errno";
+            optional = true;
+            usesDefaultFeatures = false;
+            target = { target, features }: ((!(target."rustix_use_libc" or false)) && (!(target."miri" or false)) && ("linux" == target."os" or null) && (("little" == target."endian" or null) || (("s390x" == target."arch" or null) || ("powerpc" == target."arch" or null))) && (("arm" == target."arch" or null) || (("aarch64" == target."arch" or null) && ("64" == target."pointer_width" or null)) || ("riscv64" == target."arch" or null) || ((target."rustix_use_experimental_asm" or false) && ("powerpc" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("powerpc64" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("s390x" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips32r6" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips64" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips64r6" == target."arch" or null)) || ("x86" == target."arch" or null) || (("x86_64" == target."arch" or null) && ("64" == target."pointer_width" or null))));
+          }
+          {
+            name = "errno";
+            packageId = "errno";
+            rename = "libc_errno";
+            usesDefaultFeatures = false;
+            target = { target, features }: ((!(target."windows" or false)) && ((target."rustix_use_libc" or false) || (target."miri" or false) || (!(("linux" == target."os" or null) && (("little" == target."endian" or null) || (("s390x" == target."arch" or null) || ("powerpc" == target."arch" or null))) && (("arm" == target."arch" or null) || (("aarch64" == target."arch" or null) && ("64" == target."pointer_width" or null)) || ("riscv64" == target."arch" or null) || ((target."rustix_use_experimental_asm" or false) && ("powerpc" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("powerpc64" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("s390x" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips32r6" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips64" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips64r6" == target."arch" or null)) || ("x86" == target."arch" or null) || (("x86_64" == target."arch" or null) && ("64" == target."pointer_width" or null)))))));
+          }
+          {
+            name = "errno";
+            packageId = "errno";
+            rename = "libc_errno";
+            usesDefaultFeatures = false;
+            target = { target, features }: (target."windows" or false);
+          }
+          {
+            name = "libc";
+            packageId = "libc";
+            optional = true;
+            usesDefaultFeatures = false;
+            target = { target, features }: ((!(target."rustix_use_libc" or false)) && (!(target."miri" or false)) && ("linux" == target."os" or null) && (("little" == target."endian" or null) || (("s390x" == target."arch" or null) || ("powerpc" == target."arch" or null))) && (("arm" == target."arch" or null) || (("aarch64" == target."arch" or null) && ("64" == target."pointer_width" or null)) || ("riscv64" == target."arch" or null) || ((target."rustix_use_experimental_asm" or false) && ("powerpc" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("powerpc64" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("s390x" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips32r6" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips64" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips64r6" == target."arch" or null)) || ("x86" == target."arch" or null) || (("x86_64" == target."arch" or null) && ("64" == target."pointer_width" or null))));
+          }
+          {
+            name = "libc";
+            packageId = "libc";
+            usesDefaultFeatures = false;
+            target = { target, features }: ((!(target."windows" or false)) && ((target."rustix_use_libc" or false) || (target."miri" or false) || (!(("linux" == target."os" or null) && (("little" == target."endian" or null) || (("s390x" == target."arch" or null) || ("powerpc" == target."arch" or null))) && (("arm" == target."arch" or null) || (("aarch64" == target."arch" or null) && ("64" == target."pointer_width" or null)) || ("riscv64" == target."arch" or null) || ((target."rustix_use_experimental_asm" or false) && ("powerpc" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("powerpc64" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("s390x" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips32r6" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips64" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips64r6" == target."arch" or null)) || ("x86" == target."arch" or null) || (("x86_64" == target."arch" or null) && ("64" == target."pointer_width" or null)))))));
+          }
+          {
+            name = "linux-raw-sys";
+            packageId = "linux-raw-sys";
+            usesDefaultFeatures = false;
+            target = { target, features }: ((("linux" == target."os" or null) || ("android" == target."os" or null)) && ((target."rustix_use_libc" or false) || (target."miri" or false) || (!(("linux" == target."os" or null) && (("little" == target."endian" or null) || (("s390x" == target."arch" or null) || ("powerpc" == target."arch" or null))) && (("arm" == target."arch" or null) || (("aarch64" == target."arch" or null) && ("64" == target."pointer_width" or null)) || ("riscv64" == target."arch" or null) || ((target."rustix_use_experimental_asm" or false) && ("powerpc" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("powerpc64" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("s390x" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips32r6" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips64" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips64r6" == target."arch" or null)) || ("x86" == target."arch" or null) || (("x86_64" == target."arch" or null) && ("64" == target."pointer_width" or null)))))));
+            features = [ "general" "ioctl" "no_std" ];
+          }
+          {
+            name = "linux-raw-sys";
+            packageId = "linux-raw-sys";
+            usesDefaultFeatures = false;
+            target = { target, features }: ((!(target."rustix_use_libc" or false)) && (!(target."miri" or false)) && ("linux" == target."os" or null) && (("little" == target."endian" or null) || (("s390x" == target."arch" or null) || ("powerpc" == target."arch" or null))) && (("arm" == target."arch" or null) || (("aarch64" == target."arch" or null) && ("64" == target."pointer_width" or null)) || ("riscv64" == target."arch" or null) || ((target."rustix_use_experimental_asm" or false) && ("powerpc" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("powerpc64" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("s390x" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips32r6" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips64" == target."arch" or null)) || ((target."rustix_use_experimental_asm" or false) && ("mips64r6" == target."arch" or null)) || ("x86" == target."arch" or null) || (("x86_64" == target."arch" or null) && ("64" == target."pointer_width" or null))));
+            features = [ "auxvec" "general" "errno" "ioctl" "no_std" "elf" ];
+          }
+          {
+            name = "windows-sys";
+            packageId = "windows-sys";
+            target = { target, features }: (target."windows" or false);
+            features = [ "Win32_Foundation" "Win32_Networking_WinSock" ];
+          }
+        ];
+        devDependencies = [
+          {
+            name = "errno";
+            packageId = "errno";
+            rename = "libc_errno";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "libc";
+            packageId = "libc";
+          }
+        ];
+        features = {
+          "all-apis" = [ "event" "fs" "io_uring" "mm" "mount" "net" "param" "pipe" "process" "pty" "rand" "runtime" "shm" "stdio" "system" "termios" "thread" "time" ];
+          "core" = [ "dep:core" ];
+          "default" = [ "std" ];
+          "io_uring" = [ "event" "fs" "net" "thread" "linux-raw-sys/io_uring" ];
+          "libc" = [ "dep:libc" ];
+          "libc_errno" = [ "dep:libc_errno" ];
+          "linux_5_1" = [ "linux_4_11" ];
+          "linux_5_11" = [ "linux_5_1" ];
+          "linux_latest" = [ "linux_5_11" ];
+          "net" = [ "linux-raw-sys/net" "linux-raw-sys/netlink" "linux-raw-sys/if_ether" "linux-raw-sys/xdp" ];
+          "process" = [ "linux-raw-sys/prctl" ];
+          "pty" = [ "fs" ];
+          "runtime" = [ "linux-raw-sys/prctl" ];
+          "rustc-dep-of-std" = [ "core" "rustc-std-workspace-alloc" "linux-raw-sys/rustc-dep-of-std" "bitflags/rustc-dep-of-std" ];
+          "rustc-std-workspace-alloc" = [ "dep:rustc-std-workspace-alloc" ];
+          "shm" = [ "fs" ];
+          "std" = [ "bitflags/std" "alloc" "libc?/std" "libc_errno?/std" ];
+          "system" = [ "linux-raw-sys/system" ];
+          "thread" = [ "linux-raw-sys/prctl" ];
+          "use-libc" = [ "libc_errno" "libc" ];
+        };
+        resolvedDefaultFeatures = [ "alloc" "default" "event" "fs" "net" "std" ];
+      };
       "rustversion" = rec {
         crateName = "rustversion";
         version = "1.0.23";
@@ -1008,6 +1402,141 @@ rec {
           "David Tolnay <dtolnay@gmail.com>"
         ];
 
+      };
+      "serde" = rec {
+        crateName = "serde";
+        version = "1.0.229";
+        edition = "2021";
+        sha256 = "1fp04fq4a79bpm61xz1zy0pbz4kpc7d771zii1k3inmszq55jj21";
+        authors = [
+          "Erick Tryzelaar <erick.tryzelaar@gmail.com>"
+          "David Tolnay <dtolnay@gmail.com>"
+        ];
+        dependencies = [
+          {
+            name = "serde_core";
+            packageId = "serde_core";
+            usesDefaultFeatures = false;
+            features = [ "result" ];
+          }
+        ];
+        features = {
+          "alloc" = [ "serde_core/alloc" ];
+          "default" = [ "std" ];
+          "derive" = [ "serde_derive" ];
+          "rc" = [ "serde_core/rc" ];
+          "serde_derive" = [ "dep:serde_derive" ];
+          "std" = [ "serde_core/std" ];
+          "unstable" = [ "serde_core/unstable" ];
+        };
+      };
+      "serde_core" = rec {
+        crateName = "serde_core";
+        version = "1.0.229";
+        edition = "2021";
+        sha256 = "0j1ajiha76h3nmd976il9li6975k121xa7jb39ws8n0yqp4s5p37";
+        authors = [
+          "Erick Tryzelaar <erick.tryzelaar@gmail.com>"
+          "David Tolnay <dtolnay@gmail.com>"
+        ];
+        dependencies = [
+          {
+            name = "serde_derive";
+            packageId = "serde_derive";
+            target = { target, features }: false;
+          }
+        ];
+        devDependencies = [
+          {
+            name = "serde_derive";
+            packageId = "serde_derive";
+          }
+        ];
+        features = {
+          "default" = [ "std" "result" ];
+        };
+        resolvedDefaultFeatures = [ "result" "std" ];
+      };
+      "serde_derive" = rec {
+        crateName = "serde_derive";
+        version = "1.0.229";
+        edition = "2021";
+        sha256 = "0j4k63i7h1bikxwz2c89ig0hrwbnl9mz1czn85xx99x5cc9dg9g7";
+        procMacro = true;
+        authors = [
+          "Erick Tryzelaar <erick.tryzelaar@gmail.com>"
+          "David Tolnay <dtolnay@gmail.com>"
+        ];
+        dependencies = [
+          {
+            name = "proc-macro2";
+            packageId = "proc-macro2";
+            usesDefaultFeatures = false;
+            features = [ "proc-macro" ];
+          }
+          {
+            name = "quote";
+            packageId = "quote";
+            usesDefaultFeatures = false;
+            features = [ "proc-macro" ];
+          }
+          {
+            name = "syn";
+            packageId = "syn 3.0.5";
+            usesDefaultFeatures = false;
+            features = [ "clone-impls" "derive" "parsing" "printing" "proc-macro" ];
+          }
+        ];
+        features = {
+        };
+        resolvedDefaultFeatures = [ "default" ];
+      };
+      "serde_json" = rec {
+        crateName = "serde_json";
+        version = "1.0.154";
+        edition = "2021";
+        sha256 = "1mjby21g8fxhrsfp73yz8wg6n2f4h23ah0nczds409l53f5wrsg7";
+        dependencies = [
+          {
+            name = "itoa";
+            packageId = "itoa";
+          }
+          {
+            name = "memchr";
+            packageId = "memchr";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "serde";
+            packageId = "serde";
+            usesDefaultFeatures = false;
+            target = { target, features }: false;
+          }
+          {
+            name = "serde_core";
+            packageId = "serde_core";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "zmij";
+            packageId = "zmij";
+          }
+        ];
+        devDependencies = [
+          {
+            name = "serde";
+            packageId = "serde";
+            features = [ "derive" ];
+          }
+        ];
+        features = {
+          "alloc" = [ "serde_core/alloc" ];
+          "default" = [ "std" ];
+          "indexmap" = [ "dep:indexmap" ];
+          "preserve_order" = [ "indexmap" "alloc" "dep:foldhash" ];
+          "std" = [ "memchr/std" "serde_core/std" ];
+        };
+        resolvedDefaultFeatures = [ "default" "std" ];
       };
       "simdutf8" = rec {
         crateName = "simdutf8";
@@ -1140,6 +1669,29 @@ rec {
         sha256 = "081gag86208sc3y6sdkshgw3vysm5d34p431dzw0bshz66ncng0z";
         authors = [
           "Soveu <marx.tomasz@gmail.com>"
+        ];
+
+      };
+      "transport" = rec {
+        crateName = "transport";
+        version = "0.1.0";
+        edition = "2024";
+        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./transport; };
+        dependencies = [
+          {
+            name = "datom-codec";
+            packageId = "datom-codec";
+          }
+          {
+            name = "protos";
+            packageId = "protos";
+          }
+          {
+            name = "rkyv";
+            packageId = "rkyv";
+            usesDefaultFeatures = false;
+            features = [ "alloc" "bytecheck" "little_endian" "pointer_width_32" "unaligned" ];
+          }
         ];
 
       };
@@ -1342,6 +1894,288 @@ rec {
           }
         ];
 
+      };
+      "windows-link" = rec {
+        crateName = "windows-link";
+        version = "0.2.1";
+        edition = "2021";
+        sha256 = "1rag186yfr3xx7piv5rg8b6im2dwcf8zldiflvb22xbzwli5507h";
+        libName = "windows_link";
+
+      };
+      "windows-sys" = rec {
+        crateName = "windows-sys";
+        version = "0.61.2";
+        edition = "2021";
+        sha256 = "1z7k3y9b6b5h52kid57lvmvm05362zv1v8w0gc7xyv5xphlp44xf";
+        libName = "windows_sys";
+        dependencies = [
+          {
+            name = "windows-link";
+            packageId = "windows-link";
+            usesDefaultFeatures = false;
+          }
+        ];
+        features = {
+          "Wdk" = [ "Win32_Foundation" ];
+          "Wdk_Devices" = [ "Wdk" ];
+          "Wdk_Devices_Bluetooth" = [ "Wdk_Devices" ];
+          "Wdk_Devices_HumanInterfaceDevice" = [ "Wdk_Devices" ];
+          "Wdk_Foundation" = [ "Wdk" ];
+          "Wdk_Graphics" = [ "Wdk" ];
+          "Wdk_Graphics_Direct3D" = [ "Wdk_Graphics" ];
+          "Wdk_NetworkManagement" = [ "Wdk" ];
+          "Wdk_NetworkManagement_Ndis" = [ "Wdk_NetworkManagement" ];
+          "Wdk_NetworkManagement_WindowsFilteringPlatform" = [ "Wdk_NetworkManagement" ];
+          "Wdk_Storage" = [ "Wdk" ];
+          "Wdk_Storage_FileSystem" = [ "Wdk_Storage" ];
+          "Wdk_Storage_FileSystem_Minifilters" = [ "Wdk_Storage_FileSystem" ];
+          "Wdk_System" = [ "Wdk" ];
+          "Wdk_System_IO" = [ "Wdk_System" ];
+          "Wdk_System_Memory" = [ "Wdk_System" ];
+          "Wdk_System_OfflineRegistry" = [ "Wdk_System" ];
+          "Wdk_System_Registry" = [ "Wdk_System" ];
+          "Wdk_System_SystemInformation" = [ "Wdk_System" ];
+          "Wdk_System_SystemServices" = [ "Wdk_System" ];
+          "Wdk_System_Threading" = [ "Wdk_System" ];
+          "Win32" = [ "Win32_Foundation" ];
+          "Win32_Data" = [ "Win32" ];
+          "Win32_Data_HtmlHelp" = [ "Win32_Data" ];
+          "Win32_Data_RightsManagement" = [ "Win32_Data" ];
+          "Win32_Devices" = [ "Win32" ];
+          "Win32_Devices_AllJoyn" = [ "Win32_Devices" ];
+          "Win32_Devices_Beep" = [ "Win32_Devices" ];
+          "Win32_Devices_BiometricFramework" = [ "Win32_Devices" ];
+          "Win32_Devices_Bluetooth" = [ "Win32_Devices" ];
+          "Win32_Devices_Cdrom" = [ "Win32_Devices" ];
+          "Win32_Devices_Communication" = [ "Win32_Devices" ];
+          "Win32_Devices_DeviceAndDriverInstallation" = [ "Win32_Devices" ];
+          "Win32_Devices_DeviceQuery" = [ "Win32_Devices" ];
+          "Win32_Devices_Display" = [ "Win32_Devices" ];
+          "Win32_Devices_Dvd" = [ "Win32_Devices" ];
+          "Win32_Devices_Enumeration" = [ "Win32_Devices" ];
+          "Win32_Devices_Enumeration_Pnp" = [ "Win32_Devices_Enumeration" ];
+          "Win32_Devices_Fax" = [ "Win32_Devices" ];
+          "Win32_Devices_HumanInterfaceDevice" = [ "Win32_Devices" ];
+          "Win32_Devices_Nfc" = [ "Win32_Devices" ];
+          "Win32_Devices_Nfp" = [ "Win32_Devices" ];
+          "Win32_Devices_PortableDevices" = [ "Win32_Devices" ];
+          "Win32_Devices_Properties" = [ "Win32_Devices" ];
+          "Win32_Devices_Pwm" = [ "Win32_Devices" ];
+          "Win32_Devices_Sensors" = [ "Win32_Devices" ];
+          "Win32_Devices_SerialCommunication" = [ "Win32_Devices" ];
+          "Win32_Devices_Tapi" = [ "Win32_Devices" ];
+          "Win32_Devices_Usb" = [ "Win32_Devices" ];
+          "Win32_Devices_WebServicesOnDevices" = [ "Win32_Devices" ];
+          "Win32_Foundation" = [ "Win32" ];
+          "Win32_Gaming" = [ "Win32" ];
+          "Win32_Globalization" = [ "Win32" ];
+          "Win32_Graphics" = [ "Win32" ];
+          "Win32_Graphics_Dwm" = [ "Win32_Graphics" ];
+          "Win32_Graphics_Gdi" = [ "Win32_Graphics" ];
+          "Win32_Graphics_GdiPlus" = [ "Win32_Graphics" ];
+          "Win32_Graphics_Hlsl" = [ "Win32_Graphics" ];
+          "Win32_Graphics_OpenGL" = [ "Win32_Graphics" ];
+          "Win32_Graphics_Printing" = [ "Win32_Graphics" ];
+          "Win32_Graphics_Printing_PrintTicket" = [ "Win32_Graphics_Printing" ];
+          "Win32_Management" = [ "Win32" ];
+          "Win32_Management_MobileDeviceManagementRegistration" = [ "Win32_Management" ];
+          "Win32_Media" = [ "Win32" ];
+          "Win32_Media_Audio" = [ "Win32_Media" ];
+          "Win32_Media_DxMediaObjects" = [ "Win32_Media" ];
+          "Win32_Media_KernelStreaming" = [ "Win32_Media" ];
+          "Win32_Media_Multimedia" = [ "Win32_Media" ];
+          "Win32_Media_Streaming" = [ "Win32_Media" ];
+          "Win32_Media_WindowsMediaFormat" = [ "Win32_Media" ];
+          "Win32_NetworkManagement" = [ "Win32" ];
+          "Win32_NetworkManagement_Dhcp" = [ "Win32_NetworkManagement" ];
+          "Win32_NetworkManagement_Dns" = [ "Win32_NetworkManagement" ];
+          "Win32_NetworkManagement_InternetConnectionWizard" = [ "Win32_NetworkManagement" ];
+          "Win32_NetworkManagement_IpHelper" = [ "Win32_NetworkManagement" ];
+          "Win32_NetworkManagement_Multicast" = [ "Win32_NetworkManagement" ];
+          "Win32_NetworkManagement_Ndis" = [ "Win32_NetworkManagement" ];
+          "Win32_NetworkManagement_NetBios" = [ "Win32_NetworkManagement" ];
+          "Win32_NetworkManagement_NetManagement" = [ "Win32_NetworkManagement" ];
+          "Win32_NetworkManagement_NetShell" = [ "Win32_NetworkManagement" ];
+          "Win32_NetworkManagement_NetworkDiagnosticsFramework" = [ "Win32_NetworkManagement" ];
+          "Win32_NetworkManagement_P2P" = [ "Win32_NetworkManagement" ];
+          "Win32_NetworkManagement_QoS" = [ "Win32_NetworkManagement" ];
+          "Win32_NetworkManagement_Rras" = [ "Win32_NetworkManagement" ];
+          "Win32_NetworkManagement_Snmp" = [ "Win32_NetworkManagement" ];
+          "Win32_NetworkManagement_WNet" = [ "Win32_NetworkManagement" ];
+          "Win32_NetworkManagement_WebDav" = [ "Win32_NetworkManagement" ];
+          "Win32_NetworkManagement_WiFi" = [ "Win32_NetworkManagement" ];
+          "Win32_NetworkManagement_WindowsConnectionManager" = [ "Win32_NetworkManagement" ];
+          "Win32_NetworkManagement_WindowsFilteringPlatform" = [ "Win32_NetworkManagement" ];
+          "Win32_NetworkManagement_WindowsFirewall" = [ "Win32_NetworkManagement" ];
+          "Win32_NetworkManagement_WindowsNetworkVirtualization" = [ "Win32_NetworkManagement" ];
+          "Win32_Networking" = [ "Win32" ];
+          "Win32_Networking_ActiveDirectory" = [ "Win32_Networking" ];
+          "Win32_Networking_Clustering" = [ "Win32_Networking" ];
+          "Win32_Networking_HttpServer" = [ "Win32_Networking" ];
+          "Win32_Networking_Ldap" = [ "Win32_Networking" ];
+          "Win32_Networking_WebSocket" = [ "Win32_Networking" ];
+          "Win32_Networking_WinHttp" = [ "Win32_Networking" ];
+          "Win32_Networking_WinInet" = [ "Win32_Networking" ];
+          "Win32_Networking_WinSock" = [ "Win32_Networking" ];
+          "Win32_Networking_WindowsWebServices" = [ "Win32_Networking" ];
+          "Win32_Security" = [ "Win32" ];
+          "Win32_Security_AppLocker" = [ "Win32_Security" ];
+          "Win32_Security_Authentication" = [ "Win32_Security" ];
+          "Win32_Security_Authentication_Identity" = [ "Win32_Security_Authentication" ];
+          "Win32_Security_Authorization" = [ "Win32_Security" ];
+          "Win32_Security_Credentials" = [ "Win32_Security" ];
+          "Win32_Security_Cryptography" = [ "Win32_Security" ];
+          "Win32_Security_Cryptography_Catalog" = [ "Win32_Security_Cryptography" ];
+          "Win32_Security_Cryptography_Certificates" = [ "Win32_Security_Cryptography" ];
+          "Win32_Security_Cryptography_Sip" = [ "Win32_Security_Cryptography" ];
+          "Win32_Security_Cryptography_UI" = [ "Win32_Security_Cryptography" ];
+          "Win32_Security_DiagnosticDataQuery" = [ "Win32_Security" ];
+          "Win32_Security_DirectoryServices" = [ "Win32_Security" ];
+          "Win32_Security_EnterpriseData" = [ "Win32_Security" ];
+          "Win32_Security_ExtensibleAuthenticationProtocol" = [ "Win32_Security" ];
+          "Win32_Security_Isolation" = [ "Win32_Security" ];
+          "Win32_Security_LicenseProtection" = [ "Win32_Security" ];
+          "Win32_Security_NetworkAccessProtection" = [ "Win32_Security" ];
+          "Win32_Security_WinTrust" = [ "Win32_Security" ];
+          "Win32_Security_WinWlx" = [ "Win32_Security" ];
+          "Win32_Storage" = [ "Win32" ];
+          "Win32_Storage_Cabinets" = [ "Win32_Storage" ];
+          "Win32_Storage_CloudFilters" = [ "Win32_Storage" ];
+          "Win32_Storage_Compression" = [ "Win32_Storage" ];
+          "Win32_Storage_DistributedFileSystem" = [ "Win32_Storage" ];
+          "Win32_Storage_FileHistory" = [ "Win32_Storage" ];
+          "Win32_Storage_FileSystem" = [ "Win32_Storage" ];
+          "Win32_Storage_Imapi" = [ "Win32_Storage" ];
+          "Win32_Storage_IndexServer" = [ "Win32_Storage" ];
+          "Win32_Storage_InstallableFileSystems" = [ "Win32_Storage" ];
+          "Win32_Storage_IscsiDisc" = [ "Win32_Storage" ];
+          "Win32_Storage_Jet" = [ "Win32_Storage" ];
+          "Win32_Storage_Nvme" = [ "Win32_Storage" ];
+          "Win32_Storage_OfflineFiles" = [ "Win32_Storage" ];
+          "Win32_Storage_OperationRecorder" = [ "Win32_Storage" ];
+          "Win32_Storage_Packaging" = [ "Win32_Storage" ];
+          "Win32_Storage_Packaging_Appx" = [ "Win32_Storage_Packaging" ];
+          "Win32_Storage_ProjectedFileSystem" = [ "Win32_Storage" ];
+          "Win32_Storage_StructuredStorage" = [ "Win32_Storage" ];
+          "Win32_Storage_Vhd" = [ "Win32_Storage" ];
+          "Win32_Storage_Xps" = [ "Win32_Storage" ];
+          "Win32_System" = [ "Win32" ];
+          "Win32_System_AddressBook" = [ "Win32_System" ];
+          "Win32_System_Antimalware" = [ "Win32_System" ];
+          "Win32_System_ApplicationInstallationAndServicing" = [ "Win32_System" ];
+          "Win32_System_ApplicationVerifier" = [ "Win32_System" ];
+          "Win32_System_ClrHosting" = [ "Win32_System" ];
+          "Win32_System_Com" = [ "Win32_System" ];
+          "Win32_System_Com_Marshal" = [ "Win32_System_Com" ];
+          "Win32_System_Com_StructuredStorage" = [ "Win32_System_Com" ];
+          "Win32_System_Com_Urlmon" = [ "Win32_System_Com" ];
+          "Win32_System_ComponentServices" = [ "Win32_System" ];
+          "Win32_System_Console" = [ "Win32_System" ];
+          "Win32_System_CorrelationVector" = [ "Win32_System" ];
+          "Win32_System_DataExchange" = [ "Win32_System" ];
+          "Win32_System_DeploymentServices" = [ "Win32_System" ];
+          "Win32_System_DeveloperLicensing" = [ "Win32_System" ];
+          "Win32_System_Diagnostics" = [ "Win32_System" ];
+          "Win32_System_Diagnostics_Ceip" = [ "Win32_System_Diagnostics" ];
+          "Win32_System_Diagnostics_Debug" = [ "Win32_System_Diagnostics" ];
+          "Win32_System_Diagnostics_Debug_Extensions" = [ "Win32_System_Diagnostics_Debug" ];
+          "Win32_System_Diagnostics_Etw" = [ "Win32_System_Diagnostics" ];
+          "Win32_System_Diagnostics_ProcessSnapshotting" = [ "Win32_System_Diagnostics" ];
+          "Win32_System_Diagnostics_ToolHelp" = [ "Win32_System_Diagnostics" ];
+          "Win32_System_Diagnostics_TraceLogging" = [ "Win32_System_Diagnostics" ];
+          "Win32_System_DistributedTransactionCoordinator" = [ "Win32_System" ];
+          "Win32_System_Environment" = [ "Win32_System" ];
+          "Win32_System_ErrorReporting" = [ "Win32_System" ];
+          "Win32_System_EventCollector" = [ "Win32_System" ];
+          "Win32_System_EventLog" = [ "Win32_System" ];
+          "Win32_System_EventNotificationService" = [ "Win32_System" ];
+          "Win32_System_GroupPolicy" = [ "Win32_System" ];
+          "Win32_System_HostCompute" = [ "Win32_System" ];
+          "Win32_System_HostComputeNetwork" = [ "Win32_System" ];
+          "Win32_System_HostComputeSystem" = [ "Win32_System" ];
+          "Win32_System_Hypervisor" = [ "Win32_System" ];
+          "Win32_System_IO" = [ "Win32_System" ];
+          "Win32_System_Iis" = [ "Win32_System" ];
+          "Win32_System_Ioctl" = [ "Win32_System" ];
+          "Win32_System_JobObjects" = [ "Win32_System" ];
+          "Win32_System_Js" = [ "Win32_System" ];
+          "Win32_System_Kernel" = [ "Win32_System" ];
+          "Win32_System_LibraryLoader" = [ "Win32_System" ];
+          "Win32_System_Mailslots" = [ "Win32_System" ];
+          "Win32_System_Mapi" = [ "Win32_System" ];
+          "Win32_System_Memory" = [ "Win32_System" ];
+          "Win32_System_Memory_NonVolatile" = [ "Win32_System_Memory" ];
+          "Win32_System_MessageQueuing" = [ "Win32_System" ];
+          "Win32_System_MixedReality" = [ "Win32_System" ];
+          "Win32_System_Ole" = [ "Win32_System" ];
+          "Win32_System_PasswordManagement" = [ "Win32_System" ];
+          "Win32_System_Performance" = [ "Win32_System" ];
+          "Win32_System_Performance_HardwareCounterProfiling" = [ "Win32_System_Performance" ];
+          "Win32_System_Pipes" = [ "Win32_System" ];
+          "Win32_System_Power" = [ "Win32_System" ];
+          "Win32_System_ProcessStatus" = [ "Win32_System" ];
+          "Win32_System_Recovery" = [ "Win32_System" ];
+          "Win32_System_Registry" = [ "Win32_System" ];
+          "Win32_System_RemoteDesktop" = [ "Win32_System" ];
+          "Win32_System_RemoteManagement" = [ "Win32_System" ];
+          "Win32_System_RestartManager" = [ "Win32_System" ];
+          "Win32_System_Restore" = [ "Win32_System" ];
+          "Win32_System_Rpc" = [ "Win32_System" ];
+          "Win32_System_Search" = [ "Win32_System" ];
+          "Win32_System_Search_Common" = [ "Win32_System_Search" ];
+          "Win32_System_SecurityCenter" = [ "Win32_System" ];
+          "Win32_System_Services" = [ "Win32_System" ];
+          "Win32_System_SetupAndMigration" = [ "Win32_System" ];
+          "Win32_System_Shutdown" = [ "Win32_System" ];
+          "Win32_System_StationsAndDesktops" = [ "Win32_System" ];
+          "Win32_System_SubsystemForLinux" = [ "Win32_System" ];
+          "Win32_System_SystemInformation" = [ "Win32_System" ];
+          "Win32_System_SystemServices" = [ "Win32_System" ];
+          "Win32_System_Threading" = [ "Win32_System" ];
+          "Win32_System_Time" = [ "Win32_System" ];
+          "Win32_System_TpmBaseServices" = [ "Win32_System" ];
+          "Win32_System_UserAccessLogging" = [ "Win32_System" ];
+          "Win32_System_Variant" = [ "Win32_System" ];
+          "Win32_System_VirtualDosMachines" = [ "Win32_System" ];
+          "Win32_System_WindowsProgramming" = [ "Win32_System" ];
+          "Win32_System_Wmi" = [ "Win32_System" ];
+          "Win32_UI" = [ "Win32" ];
+          "Win32_UI_Accessibility" = [ "Win32_UI" ];
+          "Win32_UI_ColorSystem" = [ "Win32_UI" ];
+          "Win32_UI_Controls" = [ "Win32_UI" ];
+          "Win32_UI_Controls_Dialogs" = [ "Win32_UI_Controls" ];
+          "Win32_UI_HiDpi" = [ "Win32_UI" ];
+          "Win32_UI_Input" = [ "Win32_UI" ];
+          "Win32_UI_Input_Ime" = [ "Win32_UI_Input" ];
+          "Win32_UI_Input_KeyboardAndMouse" = [ "Win32_UI_Input" ];
+          "Win32_UI_Input_Pointer" = [ "Win32_UI_Input" ];
+          "Win32_UI_Input_Touch" = [ "Win32_UI_Input" ];
+          "Win32_UI_Input_XboxController" = [ "Win32_UI_Input" ];
+          "Win32_UI_InteractionContext" = [ "Win32_UI" ];
+          "Win32_UI_Magnification" = [ "Win32_UI" ];
+          "Win32_UI_Shell" = [ "Win32_UI" ];
+          "Win32_UI_Shell_Common" = [ "Win32_UI_Shell" ];
+          "Win32_UI_Shell_PropertiesSystem" = [ "Win32_UI_Shell" ];
+          "Win32_UI_TabletPC" = [ "Win32_UI" ];
+          "Win32_UI_TextServices" = [ "Win32_UI" ];
+          "Win32_UI_WindowsAndMessaging" = [ "Win32_UI" ];
+          "Win32_Web" = [ "Win32" ];
+          "Win32_Web_InternetExplorer" = [ "Win32_Web" ];
+        };
+        resolvedDefaultFeatures = [ "Win32" "Win32_Foundation" "Win32_Networking" "Win32_Networking_WinSock" "Win32_System" "Win32_System_Diagnostics" "Win32_System_Diagnostics_Debug" "default" ];
+      };
+      "zmij" = rec {
+        crateName = "zmij";
+        version = "1.0.23";
+        edition = "2021";
+        sha256 = "06zwri21nnrl34rwinmvbciap8yk1mrl8qfg9pff7lgspc56sri9";
+        authors = [
+          "David Tolnay <dtolnay@gmail.com>"
+        ];
+        features = {
+          "no-panic" = [ "dep:no-panic" ];
+        };
       };
     };
 

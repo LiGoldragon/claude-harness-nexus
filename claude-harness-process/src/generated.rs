@@ -13,6 +13,7 @@ use process::{Givable, Giving, Processable, Unwindable};
 macro_rules! generated {
     ($($item:item)*) => { $(
         #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq)]
+        #[cfg_attr(feature = "datom", derive(datom_codec::Datomizable, datom_codec::Composing))]
         $item
     )* };
 }
@@ -36,6 +37,7 @@ generated! {
     pub struct Reported;
     pub struct Changed { pub flow_id: FlowId, pub event: Event, pub state: State }
     pub enum Input { Report(Hook), Subscribe }
+    pub struct Call { pub caller: Caller, pub input: Input }
     pub enum Output { Reported(Reported), Subscribed(Vec<Observed>), Changed(Changed) }
 
     // Memory
