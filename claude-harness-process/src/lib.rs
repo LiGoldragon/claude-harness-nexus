@@ -31,7 +31,7 @@ pub mod emission;
 pub mod memory;
 pub mod processes;
 
-pub use emission::{Emission, Follow_Data, Following_Data, Install_Data, Installation_Data, Row};
+pub use emission::{Compacted_Data, Emission, Follow_Data, Following_Data, Install_Data, Installation_Data, Row};
 pub use library::*;
 pub use memory::*;
 pub use meta::{HookClient, HookName, Hooks, Set};
@@ -105,7 +105,11 @@ impl Observable for Row {
             Row::TurnStarted => vec![Event::PromptSubmitted],
             Row::TurnEnded => vec![Event::TurnEnded],
             Row::Interrupted => vec![Event::Interrupted],
-            Row::Compacted(compaction) => vec![Event::Compacted(compaction.clone())],
+            Row::Compacted(boundary) => {
+                let mut events = vec![Event::Compacted(boundary.compaction.clone())];
+                events.extend(boundary.tokens_option.clone().map(Event::ContextSize));
+                events
+            }
             Row::Other => vec![],
         }
     }

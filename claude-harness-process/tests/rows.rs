@@ -31,14 +31,30 @@ fn an_interrupted_row_with_work_in_flight_leaves_the_flow_waiting() {
 }
 
 #[test]
-fn a_compacted_row_reads_as_compacted_and_leaves_the_state_as_it_was() {
-    let compaction = Compaction { trigger: Trigger::Automatic, tokens_option: Some(Tokens(228425)) };
-    assert_eq!(Row::Compacted(compaction.clone()).events(), vec![Event::Compacted(compaction)]);
+fn a_compacted_row_reports_the_boundary_then_updates_the_context_size() {
+    let compaction = Compaction { trigger: Trigger::Automatic, tokens_option: Some(Tokens(18336)) };
+    let row = Row::Compacted(Compacted_Data {
+        compaction: compaction.clone(),
+        tokens_option: Some(Tokens(6002)),
+    });
+    let events = row.events();
+    assert_eq!(events, vec![Event::Compacted(compaction), Event::ContextSize(Tokens(6002))]);
     let mut flow = observed();
     flow.after(Event::PromptSubmitted);
-    let before = flow.clone();
-    for event in Row::Compacted(Compaction { trigger: Trigger::Manual, tokens_option: None }).events() {
+    let before = flow.state.clone();
+    for event in events {
         flow.after(event);
     }
-    assert_eq!(flow, before);
+    assert_eq!(flow.state, before);
+    assert_eq!(flow.tokens, Tokens(6002));
+}
+
+#[test]
+fn a_compacted_row_without_post_tokens_gives_only_its_boundary() {
+    let compaction = Compaction { trigger: Trigger::Manual, tokens_option: None };
+    let row = Row::Compacted(Compacted_Data {
+        compaction: compaction.clone(),
+        tokens_option: None,
+    });
+    assert_eq!(row.events(), vec![Event::Compacted(compaction)]);
 }

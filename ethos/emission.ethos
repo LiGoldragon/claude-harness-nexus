@@ -11,5 +11,5 @@ Emission
         TurnStarted
         TurnEnded
         Interrupted
-        Compacted.Compaction
+        Compacted.{ Compaction Option<Tokens> }
         Other ] ]

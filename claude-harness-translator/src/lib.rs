@@ -98,16 +98,22 @@ fn interrupts(value: &Value) -> bool {
         .is_some_and(|items| items.iter().any(|item| item.get("text").and_then(Value::as_str).is_some_and(|text| text.starts_with("[Request interrupted by user"))))
 }
 
-/// The compact_boundary system row: its trigger and the context's size before it.
+/// The compact_boundary system row: its trigger and the context size before and after.
 /// A trigger that is neither manual nor auto is not a compaction this reads.
-fn compaction(value: &Value) -> Option<Compaction> {
+fn compaction(value: &Value) -> Option<Compacted_Data> {
     let metadata = value.get("compactMetadata")?;
     let trigger = match metadata.get("trigger").and_then(Value::as_str)? {
         "manual" => Trigger::Manual,
         "auto" => Trigger::Automatic,
         _ => return None,
     };
-    Some(Compaction { trigger, tokens_option: metadata.get("preTokens").and_then(Value::as_i64).map(Tokens) })
+    Some(Compacted_Data {
+        compaction: Compaction {
+            trigger,
+            tokens_option: metadata.get("preTokens").and_then(Value::as_i64).map(Tokens),
+        },
+        tokens_option: metadata.get("postTokens").and_then(Value::as_i64).map(Tokens),
+    })
 }
 
 impl Translatable for Row {

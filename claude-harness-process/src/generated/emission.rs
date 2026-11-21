@@ -10,12 +10,19 @@ extern crate alloc;
 #[rustfmt::skip]
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "datom", derive(datom_codec::Datomizable, datom_codec::Composing))]
+pub struct Compacted_Data {
+    pub compaction: harness::Compaction,
+    pub tokens_option: core::option::Option<harness::Tokens>,
+}
+#[rustfmt::skip]
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "datom", derive(datom_codec::Datomizable, datom_codec::Composing))]
 pub enum Row {
     Assistant(harness::Tokens),
     TurnStarted,
     TurnEnded,
     Interrupted,
-    Compacted(harness::Compaction),
+    Compacted(Compacted_Data),
     Other,
 }
 #[rustfmt::skip]

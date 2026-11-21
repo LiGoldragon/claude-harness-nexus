@@ -2,7 +2,7 @@
 //! as the harness evidence (flows/6fa457/harness-evidence/claude.md, 4a17 and
 //! 8hpf) records them, and how the translator reads them.
 
-use claude_harness_process::Row;
+use claude_harness_process::{Compacted_Data, Row};
 use claude_harness_translator::Translatable;
 use harness::{Compaction, Tokens, Trigger};
 
@@ -28,20 +28,20 @@ fn the_tool_result_that_comes_with_an_interruption_is_other() {
 }
 
 #[test]
-fn a_compact_boundary_is_compacted_with_its_trigger_and_size_before() {
-    assert_eq!(Row::translate(COMPACT_BOUNDARY), Ok(Row::Compacted(Compaction { trigger: Trigger::Manual, tokens_option: Some(Tokens(18336)) })));
+fn a_compact_boundary_is_compacted_with_its_trigger_and_both_sizes() {
+    assert_eq!(Row::translate(COMPACT_BOUNDARY), Ok(Row::Compacted(Compacted_Data { compaction: Compaction { trigger: Trigger::Manual, tokens_option: Some(Tokens(18336)) }, tokens_option: Some(Tokens(6002)) })));
 }
 
 #[test]
 fn an_automatic_compaction_says_so() {
     let automatic = COMPACT_BOUNDARY.replace(r#""trigger":"manual""#, r#""trigger":"auto""#);
-    assert_eq!(Row::translate(&automatic), Ok(Row::Compacted(Compaction { trigger: Trigger::Automatic, tokens_option: Some(Tokens(18336)) })));
+    assert_eq!(Row::translate(&automatic), Ok(Row::Compacted(Compacted_Data { compaction: Compaction { trigger: Trigger::Automatic, tokens_option: Some(Tokens(18336)) }, tokens_option: Some(Tokens(6002)) })));
 }
 
 #[test]
-fn a_compact_boundary_without_its_size_is_compacted_without_tokens() {
+fn a_compact_boundary_can_still_give_post_tokens_without_pre_tokens() {
     let sizeless = COMPACT_BOUNDARY.replace(r#""preTokens":18336,"#, "");
-    assert_eq!(Row::translate(&sizeless), Ok(Row::Compacted(Compaction { trigger: Trigger::Manual, tokens_option: None })));
+    assert_eq!(Row::translate(&sizeless), Ok(Row::Compacted(Compacted_Data { compaction: Compaction { trigger: Trigger::Manual, tokens_option: None }, tokens_option: Some(Tokens(6002)) })));
 }
 
 #[test]
