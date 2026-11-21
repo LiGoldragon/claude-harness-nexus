@@ -38,10 +38,11 @@ generated! {
     pub struct Reported;
     pub struct Changed { pub flow_id: FlowId, pub event: Event, pub state: State }
     // Listening is the library's, one input every Nexus has: its translator has begun to listen.
+    // It is answered at once by Acknowledged.
     pub enum Input { Report(Hook), Subscribe, Listening }
     pub struct Call { pub caller: Caller, pub input: Input }
     pub struct Subscribed(pub Vec<Observed>);
-    pub enum Output { Reported, Subscribed(Subscribed), Changed(Changed) }
+    pub enum Output { Reported, Subscribed(Subscribed), Changed(Changed), Acknowledged }
 
     // Meta signal
     pub struct HookName(pub String);

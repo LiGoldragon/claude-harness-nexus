@@ -152,7 +152,10 @@ impl SignalProcess {
             for mut stream in listener.incoming().flatten() {
                 let Ok(Some(call)) = C::read_from(&mut stream) else { continue };
                 let arrival = match called(call) {
-                    Called::Listening => Arrived::Listening,
+                    Called::Listening => {
+                        let _ = Output::Acknowledged.write_to(&mut stream);
+                        Arrived::Listening
+                    }
                     Called::Born(process) => {
                         let identity = roots.draw();
                         arrived.lock().expect("the arrived connections").insert(identity.clone(), stream);

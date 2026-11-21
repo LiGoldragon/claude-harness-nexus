@@ -6,7 +6,8 @@ Signal
   Listening ]
 [ Reported
   Subscribed.Vector<Observed>
-  Changed.{ FlowId Event State } ]
+  Changed.{ FlowId Event State }
+  Acknowledged ]
 [ Hook.[ SessionStart.{ Session FilePath }
          UserPromptSubmit.Session
          PermissionRequest.Session
