@@ -73,16 +73,6 @@ rec {
       # File a bug if you depend on any for non-debug work!
       debug = internal.debugCrate { inherit packageId; };
     };
-    "process" = rec {
-      packageId = "process";
-      build = internal.buildRustCrateWithFeatures {
-        packageId = "process";
-      };
-
-      # Debug support which might change between releases.
-      # File a bug if you depend on any for non-debug work!
-      debug = internal.debugCrate { inherit packageId; };
-    };
     "transport" = rec {
       packageId = "transport";
       build = internal.buildRustCrateWithFeatures {
@@ -278,8 +268,9 @@ rec {
             rename = "harness";
           }
           {
-            name = "process";
-            packageId = "process";
+            name = "process-library";
+            packageId = "process-library";
+            rename = "process";
           }
           {
             name = "rkyv";
@@ -331,8 +322,9 @@ rec {
             rename = "harness";
           }
           {
-            name = "process";
-            packageId = "process";
+            name = "process-library";
+            packageId = "process-library";
+            rename = "process";
           }
           {
             name = "rkyv";
@@ -406,8 +398,9 @@ rec {
             features = [ "datom" ];
           }
           {
-            name = "process";
-            packageId = "process";
+            name = "process-library";
+            packageId = "process-library";
+            rename = "process";
             features = [ "datom" ];
           }
           {
@@ -1036,16 +1029,23 @@ rec {
         };
         resolvedDefaultFeatures = [ "default" "proc-macro" ];
       };
-      "process" = rec {
-        crateName = "process";
+      "process-library" = rec {
+        crateName = "process-library";
         version = "0.1.0";
         edition = "2024";
-        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./process; };
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/LiGoldragon/process-library";
+          rev = "d797e2139e3af50c53b029cc3b8626f55220b56a";
+          sha256 = "175m3v0ccvnm1n7qzndq8fi14p4gvnch0jv6fbgwija57c4blvyd";
+        };
+        libName = "process_library";
         dependencies = [
           {
             name = "datom-codec";
             packageId = "datom-codec";
             optional = true;
+            features = [ "rkyv" ];
           }
           {
             name = "rkyv";

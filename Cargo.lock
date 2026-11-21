@@ -56,7 +56,7 @@ dependencies = [
  "claude-harness-process",
  "flow-ethos",
  "harness-nexus-library",
- "process",
+ "process-library",
  "rkyv",
  "rustix",
  "signal-claude-prepare",
@@ -71,7 +71,7 @@ dependencies = [
  "datom-codec",
  "flow-ethos",
  "harness-nexus-library",
- "process",
+ "process-library",
  "rkyv",
 ]
 
@@ -82,7 +82,7 @@ dependencies = [
  "claude-harness-process",
  "datom-codec",
  "harness-nexus-library",
- "process",
+ "process-library",
  "protos",
  "rustix",
  "serde_json",
@@ -290,8 +290,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "process"
+name = "process-library"
 version = "0.1.0"
+source = "git+https://github.com/LiGoldragon/process-library?rev=d797e2139e3af50c53b029cc3b8626f55220b56a#d797e2139e3af50c53b029cc3b8626f55220b56a"
 dependencies = [
  "datom-codec",
  "rkyv",
