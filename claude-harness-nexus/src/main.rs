@@ -17,11 +17,13 @@ use harness::{Event, Observed, State, Tokens, Transitionable};
 use process::{Arrival, Ended, Gave, Given, Identity, Living, Moment, Ownable, Owner, ProcessManager, Roots, Trace, Traced, Tracing};
 use transport::{Framed, Place, Placed};
 
-/// What the manager's queue carries: an arrival for the manager, or the
-/// library's announcement that the translator has begun to listen.
+/// What the manager's queue carries: an arrival for the manager; the library's
+/// announcement that the translator has begun to listen; or a Prepare, whose
+/// process is born with the configuration Memory holds.
 enum Arrived {
     Arrival(Arrival<Process>),
     Listening,
+    Preparing(Identity),
 }
 
 type Queue = Sender<Arrived>;
@@ -67,6 +69,11 @@ impl MemoryProcess {
     }
 
     /// A Watch of the same flow and file is kept as it is, with the offset read so far.
+    /// A Prepare's process, with the hook client and the hooks as configured now.
+    fn prepare_process(&self) -> Process {
+        Process::Prepare(PrepareProcess { hook_client_option: self.remembered.hook_client_option.clone(), hooks: self.remembered.hooks.clone() })
+    }
+
     fn watch(&mut self, watch: Watch) -> Answer {
         if self.remembered.watch_vector.iter().any(|held| held.flow_id == watch.flow_id && held.file_path == watch.file_path) {
             return Answer::Succeeded;
@@ -126,7 +133,7 @@ impl MemoryProcess {
 
 /// A subscriber's connection holds what changed until its Subscribed is written.
 struct Subscription {
-    pending: Vec<Output>,
+    pending: Vec<signal_harness::Output>,
     answered: bool,
 }
 
@@ -138,10 +145,18 @@ struct SignalProcess {
     queue: Queue,
 }
 
-/// What a call becomes: the process it is born as, or the library's Listening.
+/// What a call becomes: the process it is born as, the library's Listening, or
+/// a Prepare, born where Memory is.
 enum Called {
     Born(Process),
     Listening,
+    Preparing,
+}
+
+/// A peer that speaks a contract directly, its caller from its credentials.
+fn peer(stream: &UnixStream) -> Option<Caller> {
+    let credentials = rustix::net::sockopt::socket_peercred(stream).ok()?;
+    Some(Caller { process_id: ProcessId(credentials.pid.as_raw_nonzero().get().into()), user_id: UserId(credentials.uid.as_raw().into()) })
 }
 
 impl SignalProcess {
@@ -150,15 +165,15 @@ impl SignalProcess {
     fn listen<C, F>(place: &Place, placed: Placed, roots: Arc<Roots>, arrived: Arc<Mutex<BTreeMap<Identity, UnixStream>>>, queue: Queue, called: F) -> std::io::Result<()>
     where
         C: Framed + Send + 'static,
-        F: Fn(C) -> Called + Send + 'static,
+        F: Fn(C, Caller) -> Called + Send + 'static,
     {
         let path = place.path(placed);
         let _ = std::fs::remove_file(&path);
         let listener = UnixListener::bind(&path)?;
         thread::spawn(move || {
             for mut stream in listener.incoming().flatten() {
-                let Ok(Some(call)) = C::read_from(&mut stream) else { continue };
-                let arrival = match called(call) {
+                let (Ok(Some(call)), Some(caller)) = (C::read_from(&mut stream), peer(&stream)) else { continue };
+                let arrival = match called(call, caller) {
                     Called::Listening => {
                         let _ = Output::Acknowledged.write_to(&mut stream);
                         Arrived::Listening
@@ -167,6 +182,11 @@ impl SignalProcess {
                         let identity = roots.draw();
                         arrived.lock().expect("the arrived connections").insert(identity.clone(), stream);
                         Arrived::Arrival(Arrival::Born(Living { identity, process }))
+                    }
+                    Called::Preparing => {
+                        let identity = roots.draw();
+                        arrived.lock().expect("the arrived connections").insert(identity.clone(), stream);
+                        Arrived::Preparing(identity)
                     }
                 };
                 if queue.send(arrival).is_err() {
@@ -179,12 +199,17 @@ impl SignalProcess {
 
     fn start(place: &Place, roots: Arc<Roots>, queue: Queue) -> std::io::Result<SignalProcess> {
         let arrived = Arc::new(Mutex::new(BTreeMap::new()));
-        SignalProcess::listen(place, Placed::NexusSocket, roots.clone(), arrived.clone(), queue.clone(), |call: Call| match call.input {
+        SignalProcess::listen(place, Placed::NexusSocket, roots.clone(), arrived.clone(), queue.clone(), |call: Call, _| match call.input {
             Input::Report(hook) => Called::Born(Process::Report(ReportProcess { caller: call.caller, hook })),
-            Input::Subscribe => Called::Born(Process::Subscribe(SubscribeProcess { caller: call.caller })),
             Input::Listening => Called::Listening,
         })?;
-        SignalProcess::listen(place, Placed::MetaSocket, roots, arrived.clone(), queue.clone(), |call: MetaCall| match call.meta_input {
+        SignalProcess::listen(place, Placed::SubscriptionSocket, roots.clone(), arrived.clone(), queue.clone(), |input: signal_harness::Input, caller| match input {
+            signal_harness::Input::Subscribe => Called::Born(Process::Subscribe(SubscribeProcess { caller })),
+        })?;
+        SignalProcess::listen(place, Placed::PrepareSocket, roots.clone(), arrived.clone(), queue.clone(), |input: signal_claude_prepare::Input, _| match input {
+            signal_claude_prepare::Input::Prepare => Called::Preparing,
+        })?;
+        SignalProcess::listen(place, Placed::MetaSocket, roots, arrived.clone(), queue.clone(), |call: MetaCall, _| match call.meta_input {
             MetaInput::Configure(set) => Called::Born(Process::Configure(ConfigureProcess { caller: call.caller, set })),
         })?;
         Ok(SignalProcess { arrived, connections: BTreeMap::new(), subscriptions: BTreeMap::new(), queue })
@@ -219,7 +244,7 @@ impl SignalProcess {
         self.subscriptions.insert(identity.clone(), Subscription { pending: Vec::new(), answered: false });
     }
 
-    fn subscribed(&mut self, identity: &Identity, output: Output) {
+    fn subscribed(&mut self, identity: &Identity, output: signal_harness::Output) {
         self.answer(identity, &output);
         let pending = match self.subscriptions.get_mut(identity) {
             Some(subscription) => {
@@ -233,7 +258,7 @@ impl SignalProcess {
         }
     }
 
-    fn publish(&mut self, output: Output) {
+    fn publish(&mut self, output: signal_harness::Output) {
         for (identity, subscription) in self.subscriptions.iter_mut() {
             match (subscription.answered, self.connections.get_mut(identity)) {
                 (true, Some(stream)) => {
@@ -259,13 +284,33 @@ struct EmissionSocket {
 }
 
 impl EmissionSocket {
+    /// One emission, one connection, one outcome; read beside the manager, so it waits for nothing.
+    fn install(&mut self, identity: Identity, install: Install, queue: Queue) {
+        let given = move |identity: Identity, taken| Arrived::Arrival(Arrival::Given(Given { identity, taken: Taken::Installation(taken) }));
+        let Ok(mut stream) = UnixStream::connect(self.place.path(Placed::EmissionSocket)) else {
+            let _ = queue.send(given(identity, Err(Unobserved::Unsubmitted)));
+            return;
+        };
+        if Emission::Install(install).write_to(&mut stream).is_err() {
+            let _ = queue.send(given(identity, Err(Unobserved::Unsubmitted)));
+            return;
+        }
+        thread::spawn(move || {
+            let installation = match Installation::read_from(&mut stream) {
+                Ok(Some(installation)) => Ok(installation),
+                _ => Err(Unobserved::Unanswered),
+            };
+            let _ = queue.send(given(identity, installation));
+        });
+    }
+
     fn follow(&mut self, identity: Identity, follow: Follow, queue: Queue) {
         let given = move |identity: &Identity, taken| Arrived::Arrival(Arrival::Given(Given { identity: identity.clone(), taken: Taken::Following(taken) }));
         let Ok(mut stream) = UnixStream::connect(self.place.path(Placed::EmissionSocket)) else {
             let _ = queue.send(given(&identity, Err(Unobserved::Unsubmitted)));
             return;
         };
-        if follow.write_to(&mut stream).is_err() {
+        if Emission::Follow(follow).write_to(&mut stream).is_err() {
             let _ = queue.send(given(&identity, Err(Unobserved::Unsubmitted)));
             return;
         }
@@ -360,8 +405,10 @@ impl World {
     fn carry(&mut self, Gave { identity, gift }: Gave<Gift>) {
         match gift {
             Gift::Reported => self.signal.answer(&identity, &Output::Reported),
-            Gift::Subscribed(subscribed) => self.signal.subscribed(&identity, Output::Subscribed(subscribed)),
-            Gift::Changed(changed) => self.signal.publish(Output::Changed(changed)),
+            Gift::Subscribed(Subscribed(observed_vector)) => self.signal.subscribed(&identity, signal_harness::Output::Subscribed(observed_vector)),
+            Gift::Changed(Changed { flow_id, event, state }) => self.signal.publish(signal_harness::Output::Changed(signal_harness::Changed { flow_id, event, state })),
+            Gift::Prepared(Prepared(file_path_option)) => self.signal.answer(&identity, &signal_claude_prepare::Output::Prepared(file_path_option)),
+            Gift::Install(install) => self.emission.install(identity, install, self.queue.clone()),
             Gift::Configured(Configured(set)) => self.signal.answer(&identity, &MetaOutput::Configured(set)),
             Gift::Recall(Recall) => {
                 self.signal.subscribe(&identity);
@@ -443,6 +490,10 @@ fn main() -> ExitCode {
         match arrived {
             Arrived::Arrival(arrival) => manager.arrive(arrival, &mut world),
             Arrived::Listening => world.bear_watches(),
+            Arrived::Preparing(identity) => {
+                let process = world.memory.prepare_process();
+                manager.arrive(Arrival::Born(Living { identity, process }), &mut world)
+            }
         }
     }
     manager.end_all(&mut world);

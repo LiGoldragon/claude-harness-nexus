@@ -58,12 +58,15 @@ dependencies = [
  "harness-nexus-library",
  "process",
  "rkyv",
+ "rustix",
+ "signal-claude-prepare",
+ "signal-harness",
  "transport",
 ]
 
 [[package]]
 name = "claude-harness-process"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "datom-codec",
  "flow-ethos",
@@ -83,6 +86,8 @@ dependencies = [
  "protos",
  "rustix",
  "serde_json",
+ "signal-claude-prepare",
+ "signal-harness",
  "transport",
 ]
 
@@ -174,7 +179,7 @@ dependencies = [
 [[package]]
 name = "harness-nexus-library"
 version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/harness-nexus-library?rev=3613d63#3613d63d0994de7841bcf6f070c83bebb0ddfa5a"
+source = "git+https://github.com/LiGoldragon/harness-nexus-library?rev=3613d63d0994de7841bcf6f070c83bebb0ddfa5a#3613d63d0994de7841bcf6f070c83bebb0ddfa5a"
 dependencies = [
  "datom-codec",
  "flow-ethos",
@@ -436,6 +441,29 @@ dependencies = [
  "serde",
  "serde_core",
  "zmij",
+]
+
+[[package]]
+name = "signal-claude-prepare"
+version = "0.1.0"
+source = "git+https://github.com/LiGoldragon/signal-claude-prepare?rev=1c1b040f545d4368451894e988073449b4591299#1c1b040f545d4368451894e988073449b4591299"
+dependencies = [
+ "datom-codec",
+ "harness-nexus-library",
+ "protos",
+ "rkyv",
+]
+
+[[package]]
+name = "signal-harness"
+version = "0.1.0"
+source = "git+https://github.com/LiGoldragon/signal-harness?rev=eea28159303e9b51e4e211151aba0a3ceb686a32#eea28159303e9b51e4e211151aba0a3ceb686a32"
+dependencies = [
+ "datom-codec",
+ "flow-ethos",
+ "harness-nexus-library",
+ "protos",
+ "rkyv",
 ]
 
 [[package]]

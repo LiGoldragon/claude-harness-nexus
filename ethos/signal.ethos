@@ -1,12 +1,8 @@
 Signal
-[ harness:[ Session FilePath Response BackgroundWork EndReason Event State Observed ]
-  flow:[ FlowId ] ]
+[ harness:[ Session FilePath Response BackgroundWork EndReason ] ]
 [ Report.Hook
-  Subscribe
   Listening ]
 [ Reported
-  Subscribed.Vector<Observed>
-  Changed.{ FlowId Event State }
   Acknowledged ]
 [ Hook.[ SessionStart.{ Session FilePath }
          UserPromptSubmit.Session

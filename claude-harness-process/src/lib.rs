@@ -128,7 +128,7 @@ impl Processable for WatchProcess {
 }
 
 impl Processable for SubscribeProcess {
-    type Taken = SubscribeTaken;
+    type Taken = Recollection;
     type Gift = Gift;
     /// It ends one way, when its connection closes, and so declares no outcome.
     type Outcome = ();
@@ -139,16 +139,14 @@ impl Processable for SubscribeProcess {
     }
 
     /// It answers with every session as it is now, then rests while its connection is open.
-    fn take<N: Giving<Gift>>(&mut self, taken: SubscribeTaken, mut manager: N) -> Option<()> {
-        match taken {
-            SubscribeTaken::Recollection(recollection) => manager.give(Subscribed(recollection.0)),
-        }
+    fn take<N: Giving<Gift>>(&mut self, recollection: Recollection, mut manager: N) -> Option<()> {
+        manager.give(Subscribed(recollection.0));
         None
     }
 }
 
 impl Processable for ConfigureProcess {
-    type Taken = ConfigureTaken;
+    type Taken = Answer;
     type Gift = Gift;
     type Outcome = Configuring;
 
@@ -157,13 +155,45 @@ impl Processable for ConfigureProcess {
         None
     }
 
-    fn take<N: Giving<Gift>>(&mut self, taken: ConfigureTaken, mut manager: N) -> Option<Configuring> {
-        match taken {
-            ConfigureTaken::Answer(Answer::Succeeded) => {
+    fn take<N: Giving<Gift>>(&mut self, answer: Answer, mut manager: N) -> Option<Configuring> {
+        match answer {
+            Answer::Succeeded => {
                 manager.give(Configured(self.set.clone()));
                 Some(Configuring::Configured)
             }
-            ConfigureTaken::Answer(Answer::Failed) => Some(Configuring::Unremembered),
+            Answer::Failed => Some(Configuring::Unremembered),
         }
+    }
+}
+
+/// Born of a Prepare, holding the hook client and the hooks as configured then:
+/// it gives Install, and answers with the path the translator wrote, or None,
+/// the reason for it being its outcome in the trace.
+impl Processable for PrepareProcess {
+    type Taken = Result<Installation, Unobserved>;
+    type Gift = Gift;
+    type Outcome = Preparing;
+
+    fn begin<N: Giving<Gift>>(&mut self, mut manager: N) -> Option<Preparing> {
+        match &self.hook_client_option {
+            Some(hook_client) => {
+                manager.give(Install { hook_client: hook_client.clone(), hooks: self.hooks.clone() });
+                None
+            }
+            None => {
+                manager.give(Prepared(None));
+                Some(Preparing::Unconfigured)
+            }
+        }
+    }
+
+    fn take<N: Giving<Gift>>(&mut self, installation: Result<Installation, Unobserved>, mut manager: N) -> Option<Preparing> {
+        let (prepared, preparing) = match installation {
+            Ok(Installation::Installed(file_path)) => (Some(file_path), Preparing::Installed),
+            Ok(Installation::Uninstalled(_)) => (None, Preparing::Uninstalled),
+            Err(_) => (None, Preparing::Unobserved),
+        };
+        manager.give(Prepared(prepared));
+        Some(preparing)
     }
 }

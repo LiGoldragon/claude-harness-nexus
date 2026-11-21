@@ -36,13 +36,16 @@ generated! {
         SessionEnd(SessionEnd),
     }
     pub struct Reported;
-    pub struct Changed { pub flow_id: FlowId, pub event: Event, pub state: State }
     // Listening is the library's, one input every Nexus has: its translator has begun to listen.
-    // It is answered at once by Acknowledged.
-    pub enum Input { Report(Hook), Subscribe, Listening }
+    // It is answered at once by Acknowledged. Subscribe is signal-harness's, Prepare signal-claude-prepare's.
+    pub enum Input { Report(Hook), Listening }
     pub struct Call { pub caller: Caller, pub input: Input }
+    pub enum Output { Reported, Acknowledged }
+
+    // Of the contracts the Nexus serves beside its own, as its processes hold them
+    pub struct Changed { pub flow_id: FlowId, pub event: Event, pub state: State }
     pub struct Subscribed(pub Vec<Observed>);
-    pub enum Output { Reported, Subscribed(Subscribed), Changed(Changed), Acknowledged }
+    pub struct Prepared(pub Option<FilePath>);
 
     // Meta signal
     pub struct HookName(pub String);
@@ -71,6 +74,9 @@ generated! {
     pub struct Follow { pub file_path: FilePath, pub offset: Offset, pub row_count: RowCount }
     pub struct Following { pub row_vector: Vec<Row>, pub offset: Offset }
     pub enum Row { Assistant(Tokens), TurnStarted, TurnEnded, Other }
+    pub struct Install { pub hook_client: HookClient, pub hooks: Hooks }
+    pub enum Installation { Installed(FilePath), Uninstalled(i64) }
+    pub enum Emission { Follow(Follow), Install(Install) }
     pub enum Unobserved { Unsubmitted, Unanswered }
 
     // Process
@@ -81,18 +87,19 @@ generated! {
     pub enum Reporting { Observed, Unremembered }
     pub enum Watching { Forgotten, Unfollowed }
     pub struct SubscribeProcess { pub caller: Caller }
-    pub enum SubscribeTaken { Recollection(Recollection) }
     pub struct ConfigureProcess { pub caller: Caller, pub set: Set }
-    pub enum ConfigureTaken { Answer(Answer) }
     pub struct Configured(pub Set);
     pub enum Configuring { Configured, Unremembered }
+    // The hook client and the hooks, moved in at birth; no hook client configured is a None.
+    pub struct PrepareProcess { pub hook_client_option: Option<HookClient>, pub hooks: Hooks }
+    pub enum Preparing { Installed, Uninstalled, Unobserved, Unconfigured }
 
     // The enums over the Nexus's processes
-    pub enum Process { Report(ReportProcess), Watch(WatchProcess), Subscribe(SubscribeProcess), Configure(ConfigureProcess) }
-    pub enum Gift { Reported, Subscribed(Subscribed), Changed(Changed), Watch(Watch), Observe(Observe), Recall(Recall), Keep(Keep), Configured(Configured), Follow(Follow) }
-    pub enum Taken { Answer(Answer), Observation(Observation), Recollection(Recollection), Following(Result<Following, Unobserved>) }
+    pub enum Process { Report(ReportProcess), Watch(WatchProcess), Subscribe(SubscribeProcess), Configure(ConfigureProcess), Prepare(PrepareProcess) }
+    pub enum Gift { Reported, Subscribed(Subscribed), Changed(Changed), Watch(Watch), Observe(Observe), Recall(Recall), Keep(Keep), Configured(Configured), Follow(Follow), Install(Install), Prepared(Prepared) }
+    pub enum Taken { Answer(Answer), Observation(Observation), Recollection(Recollection), Following(Result<Following, Unobserved>), Installation(Result<Installation, Unobserved>) }
     // One variant for each process, named for it; a process that ends one way carries nothing.
-    pub enum Outcome { Report(Reporting), Watch(Watching), Subscribe, Configure(Configuring), Unwound }
+    pub enum Outcome { Report(Reporting), Watch(Watching), Subscribe, Configure(Configuring), Prepare(Preparing), Unwound }
 }
 
 macro_rules! givable {
@@ -115,6 +122,8 @@ givable! {
     Watch => Answer,
     Observe => Observation,
     Follow => Result<Following, Unobserved>,
+    Install => Result<Installation, Unobserved>,
+    Prepared => (),
 }
 
 impl Unwindable for Outcome {
@@ -127,7 +136,7 @@ impl Ownable for Process {
     fn owner(&self) -> Owner {
         match self {
             Process::Watch(_) => Owner::Memory,
-            Process::Report(_) | Process::Subscribe(_) | Process::Configure(_) => Owner::Signal,
+            Process::Report(_) | Process::Subscribe(_) | Process::Configure(_) | Process::Prepare(_) => Owner::Signal,
         }
     }
 }
@@ -143,6 +152,7 @@ impl Processable for Process {
             Process::Watch(watch) => watch.begin(giving).map(Outcome::Watch),
             Process::Subscribe(subscribe) => subscribe.begin(giving).map(|()| Outcome::Subscribe),
             Process::Configure(configure) => configure.begin(giving).map(Outcome::Configure),
+            Process::Prepare(prepare) => prepare.begin(giving).map(Outcome::Prepare),
         }
     }
 
@@ -152,8 +162,9 @@ impl Processable for Process {
             (Process::Report(report), Taken::Observation(observation)) => report.take(ReportTaken::Observation(observation), giving).map(Outcome::Report),
             (Process::Watch(watch), Taken::Following(following)) => watch.take(WatchTaken::Following(following), giving).map(Outcome::Watch),
             (Process::Watch(watch), Taken::Observation(observation)) => watch.take(WatchTaken::Observation(observation), giving).map(Outcome::Watch),
-            (Process::Subscribe(subscribe), Taken::Recollection(recollection)) => subscribe.take(SubscribeTaken::Recollection(recollection), giving).map(|()| Outcome::Subscribe),
-            (Process::Configure(configure), Taken::Answer(answer)) => configure.take(ConfigureTaken::Answer(answer), giving).map(Outcome::Configure),
+            (Process::Subscribe(subscribe), Taken::Recollection(recollection)) => subscribe.take(recollection, giving).map(|()| Outcome::Subscribe),
+            (Process::Configure(configure), Taken::Answer(answer)) => configure.take(answer, giving).map(Outcome::Configure),
+            (Process::Prepare(prepare), Taken::Installation(installation)) => prepare.take(installation, giving).map(Outcome::Prepare),
             _ => None,
         }
     }

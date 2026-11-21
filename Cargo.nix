@@ -288,6 +288,19 @@ rec {
             features = [ "alloc" "bytecheck" "little_endian" "pointer_width_32" "unaligned" ];
           }
           {
+            name = "rustix";
+            packageId = "rustix";
+            features = [ "net" "fs" "event" ];
+          }
+          {
+            name = "signal-claude-prepare";
+            packageId = "signal-claude-prepare";
+          }
+          {
+            name = "signal-harness";
+            packageId = "signal-harness";
+          }
+          {
             name = "transport";
             packageId = "transport";
           }
@@ -296,7 +309,7 @@ rec {
       };
       "claude-harness-process" = rec {
         crateName = "claude-harness-process";
-        version = "0.4.0";
+        version = "0.5.0";
         edition = "2024";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./claude-harness-process; };
         libName = "claude_harness_process";
@@ -354,6 +367,16 @@ rec {
             requiredFeatures = [ ];
           }
           {
+            name = "claude-harness-prepare";
+            path = "src/bin/claude-harness-prepare.rs";
+            requiredFeatures = [ ];
+          }
+          {
+            name = "claude-harness-subscription";
+            path = "src/bin/claude-harness-subscription.rs";
+            requiredFeatures = [ ];
+          }
+          {
             name = "claude-harness-trace";
             path = "src/bin/claude-harness-trace.rs";
             requiredFeatures = [ ];
@@ -399,6 +422,16 @@ rec {
           {
             name = "serde_json";
             packageId = "serde_json";
+          }
+          {
+            name = "signal-claude-prepare";
+            packageId = "signal-claude-prepare";
+            features = [ "datom" ];
+          }
+          {
+            name = "signal-harness";
+            packageId = "signal-harness";
+            features = [ "datom" ];
           }
           {
             name = "transport";
@@ -1553,6 +1586,92 @@ rec {
           "std" = [ "memchr/std" "serde_core/std" ];
         };
         resolvedDefaultFeatures = [ "default" "std" ];
+      };
+      "signal-claude-prepare" = rec {
+        crateName = "signal-claude-prepare";
+        version = "0.1.0";
+        edition = "2024";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/LiGoldragon/signal-claude-prepare";
+          rev = "1c1b040f545d4368451894e988073449b4591299";
+          sha256 = "11w0ipf0pbakc9l5z9vqlk2y2dzsrfgwndhx1p7wb475f097bkvw";
+        };
+        libName = "signal_claude_prepare";
+        dependencies = [
+          {
+            name = "datom-codec";
+            packageId = "datom-codec";
+            optional = true;
+          }
+          {
+            name = "harness-nexus-library";
+            packageId = "harness-nexus-library";
+            rename = "harness";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "protos";
+            packageId = "protos";
+            optional = true;
+          }
+          {
+            name = "rkyv";
+            packageId = "rkyv";
+            usesDefaultFeatures = false;
+            features = [ "std" "bytecheck" "little_endian" "pointer_width_32" "unaligned" ];
+          }
+        ];
+        features = {
+          "datom" = [ "dep:datom-codec" "dep:protos" "harness/datom" ];
+        };
+        resolvedDefaultFeatures = [ "datom" "default" ];
+      };
+      "signal-harness" = rec {
+        crateName = "signal-harness";
+        version = "0.1.0";
+        edition = "2024";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/LiGoldragon/signal-harness";
+          rev = "eea28159303e9b51e4e211151aba0a3ceb686a32";
+          sha256 = "0jfrvvy3d4804nc8vh5dcbx3qg1akl1y6zkscx6p3hc3qjvhl1am";
+        };
+        libName = "signal_harness";
+        dependencies = [
+          {
+            name = "datom-codec";
+            packageId = "datom-codec";
+            optional = true;
+          }
+          {
+            name = "flow-ethos";
+            packageId = "flow-ethos";
+            rename = "flow";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "harness-nexus-library";
+            packageId = "harness-nexus-library";
+            rename = "harness";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "protos";
+            packageId = "protos";
+            optional = true;
+          }
+          {
+            name = "rkyv";
+            packageId = "rkyv";
+            usesDefaultFeatures = false;
+            features = [ "std" "bytecheck" "little_endian" "pointer_width_32" "unaligned" ];
+          }
+        ];
+        features = {
+          "datom" = [ "dep:datom-codec" "dep:protos" "harness/datom" "flow/datom" ];
+        };
+        resolvedDefaultFeatures = [ "datom" "default" ];
       };
       "simdutf8" = rec {
         crateName = "simdutf8";

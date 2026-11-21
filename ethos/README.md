@@ -2,6 +2,9 @@ The ethos of each root of the Claude Harness Nexus; generated.rs in claude-harne
 written by hand from them. Checked with ethos-zero at github:LiGoldragon/ethos-zero 415c37036:
 
 - signal.ethos, meta.ethos, emission.ethos (an Emission written as a Signal): Checked.
+  signal.ethos is the Nexus's own contract with its translator. Subscribe is signal-harness's
+  (github LiGoldragon/signal-harness, branch next) and Prepare signal-claude-prepare's, each
+  served on a socket of its own.
   Listening, in the Signal's inputs, is the library's input every Nexus has: its translator
   tells it that it has begun to listen, and it is answered at once by Acknowledged.
 - memory.ethos: Checked. The Memory root holds its two sections, the imports and the records.

@@ -1,8 +1,12 @@
 Signal
 [ harness:[ FilePath Tokens ]
-  claude_harness:[ Offset RowCount ] ]
-[ Follow.{ FilePath Offset RowCount } ]
-[ Following.{ Vector<Row> Offset } ]
+  claude_harness:[ Offset RowCount ]
+  claude_harness:meta:[ Hooks HookClient ] ]
+[ Follow.{ FilePath Offset RowCount }
+  Install.{ HookClient Hooks } ]
+[ Following.{ Vector<Row> Offset }
+  Installation.[ Installed.FilePath
+                 Uninstalled.Integer ] ]
 [ Row.[ Assistant.Tokens
         TurnStarted
         TurnEnded
