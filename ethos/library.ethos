@@ -8,7 +8,7 @@ Library
   Answer.[ Succeeded Failed ]
   Observe.{ FlowId Vector<Event> Option<Offset> }
   Observation.Vector<Changed>
-  Configure.Set
+  Keep.Set
   Recall.{}
   Recollection.Vector<Observed> ]
 []

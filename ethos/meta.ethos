@@ -3,6 +3,9 @@ Signal
 [ Configure.Set ]
 [ Configured.Set ]
 [ HookName.String
-  Set.[ Hooks.Vector<HookName>
+  Hooks.Vector<HookName>
+  HookClient.String
+  Set.[ Hooks
         RemoveHook.HookName
+        HookClient
         RowCount ] ]

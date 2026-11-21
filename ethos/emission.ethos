@@ -4,4 +4,6 @@ Signal
 [ Follow.{ FilePath Offset RowCount } ]
 [ Following.{ Vector<Row> Offset } ]
 [ Row.[ Assistant.Tokens
+        TurnStarted
+        TurnEnded
         Other ] ]

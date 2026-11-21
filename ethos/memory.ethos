@@ -2,9 +2,10 @@ Memory
 [ harness:[ FilePath Observed ]
   flow:[ FlowId ]
   claude_harness:[ Offset RowCount ]
-  claude_harness:meta:[ HookName ] ]
+  claude_harness:meta:[ Hooks HookClient ] ]
 [ Watch.{ FlowId FilePath Offset }
   Remembered.{ Vector<Observed>
                Vector<Watch>
-               Option<RowCount>
-               Vector<HookName> } ]
+               Hooks
+               Option<HookClient>
+               Option<RowCount> } ]

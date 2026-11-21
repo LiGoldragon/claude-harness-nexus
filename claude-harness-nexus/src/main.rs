@@ -13,7 +13,7 @@ use std::thread;
 
 use claude_harness_process::*;
 use flow::FlowId;
-use harness::{Observed, State, Tokens, Transitionable};
+use harness::{Event, Observed, State, Tokens, Transitionable};
 use process::{Arrival, Ended, Gave, Given, Identity, Living, Moment, Ownable, Owner, ProcessManager, Roots, Trace, Traced, Tracing};
 use transport::{Framed, Place, Placed};
 
@@ -33,13 +33,16 @@ struct MemoryProcess {
 }
 
 impl MemoryProcess {
-    fn open(place: &Place) -> MemoryProcess {
+    /// A memory file that is there and cannot be read is not overwritten: the program does not start.
+    fn open(place: &Place) -> std::io::Result<MemoryProcess> {
         let file = place.path(Placed::Memory(VERSION));
-        let remembered = File::open(&file)
-            .ok()
-            .and_then(|file| Remembered::read_from(&mut BufReader::new(file)).ok().flatten())
-            .unwrap_or(Remembered { observed_vector: Vec::new(), watch_vector: Vec::new(), row_count_option: None, hook_name_vector: Vec::new() });
-        MemoryProcess { remembered, file }
+        let empty = || Remembered { observed_vector: Vec::new(), watch_vector: Vec::new(), hooks: Hooks(Vec::new()), hook_client_option: None, row_count_option: None };
+        let remembered = match File::open(&file) {
+            Ok(opened) => Remembered::read_from(&mut BufReader::new(opened))?.unwrap_or_else(empty),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => empty(),
+            Err(error) => return Err(error),
+        };
+        Ok(MemoryProcess { remembered, file })
     }
 
     fn keep(&self) -> Answer {
@@ -63,8 +66,9 @@ impl MemoryProcess {
         Some(Process::Watch(WatchProcess { flow_id: watch.flow_id.clone(), file_path: watch.file_path.clone(), offset: watch.offset.clone(), row_count }))
     }
 
+    /// A Watch of the same flow and file is kept as it is, with the offset read so far.
     fn watch(&mut self, watch: Watch) -> Answer {
-        if self.remembered.watch_vector.contains(&watch) {
+        if self.remembered.watch_vector.iter().any(|held| held.flow_id == watch.flow_id && held.file_path == watch.file_path) {
             return Answer::Succeeded;
         }
         self.remembered.watch_vector.retain(|held| held.flow_id != watch.flow_id);
@@ -72,10 +76,11 @@ impl MemoryProcess {
         self.keep()
     }
 
-    fn configure(&mut self, Configure(set): Configure) -> Answer {
+    fn configure(&mut self, Keep(set): Keep) -> Answer {
         match set {
-            Set::Hooks(hook_name_vector) => self.remembered.hook_name_vector = hook_name_vector,
-            Set::RemoveHook(hook_name) => self.remembered.hook_name_vector.retain(|held| *held != hook_name),
+            Set::Hooks(hooks) => self.remembered.hooks = hooks,
+            Set::RemoveHook(hook_name) => self.remembered.hooks.0.retain(|held| *held != hook_name),
+            Set::HookClient(hook_client) => self.remembered.hook_client_option = Some(hook_client),
             Set::RowCount(row_count) => self.remembered.row_count_option = Some(row_count),
         }
         self.keep()
@@ -99,9 +104,11 @@ impl MemoryProcess {
         let changed = observe
             .event_vector
             .into_iter()
-            .map(|event| {
+            .filter_map(|event| {
+                let before = observed.state.clone();
                 observed.after(event.clone());
-                Changed { flow_id: observe.flow_id.clone(), event, state: observed.state.clone() }
+                let witnessed = matches!(event, Event::PromptSubmitted | Event::TurnEnded) && observed.state == before;
+                (!witnessed).then(|| Changed { flow_id: observe.flow_id.clone(), event, state: observed.state.clone() })
             })
             .collect();
         if observed.state == State::Ended {
@@ -262,7 +269,10 @@ impl EmissionSocket {
             let _ = queue.send(given(&identity, Err(Unobserved::Unsubmitted)));
             return;
         }
-        let Ok(mut reading) = stream.try_clone() else { return };
+        let Ok(mut reading) = stream.try_clone() else {
+            let _ = queue.send(given(&identity, Err(Unobserved::Unanswered)));
+            return;
+        };
         self.lasting.insert(identity.clone(), stream);
         thread::spawn(move || {
             loop {
@@ -363,8 +373,8 @@ impl World {
                 self.give_back(identity, Taken::Answer(answer));
                 self.bear_watches();
             }
-            Gift::Configure(configure) => {
-                let answer = self.memory.configure(configure);
+            Gift::Keep(keep) => {
+                let answer = self.memory.configure(keep);
                 self.give_back(identity, Taken::Answer(answer));
                 self.bear_watches();
             }
@@ -417,7 +427,13 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let memory = MemoryProcess::open(&place);
+    let memory = match MemoryProcess::open(&place) {
+        Ok(memory) => memory,
+        Err(error) => {
+            eprintln!("the memory cannot be read: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
     let emission = EmissionSocket { place: place.clone(), lasting: BTreeMap::new() };
     let mut world = World { signal, memory, emission, archive, queue, roots, watching: BTreeMap::new() };
     world.trace(Trace::Started(now()));

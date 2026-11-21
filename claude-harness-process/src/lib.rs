@@ -63,6 +63,8 @@ impl Observable for Row {
     fn events(&self) -> Vec<Event> {
         match self {
             Row::Assistant(tokens) => vec![Event::ContextSize(*tokens)],
+            Row::TurnStarted => vec![Event::PromptSubmitted],
+            Row::TurnEnded => vec![Event::TurnEnded],
             Row::Other => vec![],
         }
     }
@@ -151,7 +153,7 @@ impl Processable for ConfigureProcess {
     type Outcome = Configuring;
 
     fn begin<N: Giving<Gift>>(&mut self, mut manager: N) -> Option<Configuring> {
-        manager.give(Configure(self.set.clone()));
+        manager.give(Keep(self.set.clone()));
         None
     }
 

@@ -46,7 +46,9 @@ generated! {
 
     // Meta signal
     pub struct HookName(pub String);
-    pub enum Set { Hooks(Vec<HookName>), RemoveHook(HookName), RowCount(RowCount) }
+    pub struct Hooks(pub Vec<HookName>);
+    pub struct HookClient(pub String);
+    pub enum Set { Hooks(Hooks), RemoveHook(HookName), HookClient(HookClient), RowCount(RowCount) }
     pub enum MetaInput { Configure(Set) }
     pub enum MetaOutput { Configured(Set) }
     pub struct MetaCall { pub caller: Caller, pub meta_input: MetaInput }
@@ -62,13 +64,13 @@ generated! {
     pub enum Answer { Succeeded, Failed }
     pub struct Recall;
     pub struct Recollection(pub Vec<Observed>);
-    pub struct Configure(pub Set);
-    pub struct Remembered { pub observed_vector: Vec<Observed>, pub watch_vector: Vec<Watch>, pub row_count_option: Option<RowCount>, pub hook_name_vector: Vec<HookName> }
+    pub struct Keep(pub Set);
+    pub struct Remembered { pub observed_vector: Vec<Observed>, pub watch_vector: Vec<Watch>, pub hooks: Hooks, pub hook_client_option: Option<HookClient>, pub row_count_option: Option<RowCount> }
 
     // Emission
     pub struct Follow { pub file_path: FilePath, pub offset: Offset, pub row_count: RowCount }
     pub struct Following { pub row_vector: Vec<Row>, pub offset: Offset }
-    pub enum Row { Assistant(Tokens), Other }
+    pub enum Row { Assistant(Tokens), TurnStarted, TurnEnded, Other }
     pub enum Unobserved { Unsubmitted, Unanswered }
 
     // Process
@@ -87,7 +89,7 @@ generated! {
 
     // The enums over the Nexus's processes
     pub enum Process { Report(ReportProcess), Watch(WatchProcess), Subscribe(SubscribeProcess), Configure(ConfigureProcess) }
-    pub enum Gift { Reported, Subscribed(Subscribed), Changed(Changed), Watch(Watch), Observe(Observe), Recall(Recall), Configure(Configure), Configured(Configured), Follow(Follow) }
+    pub enum Gift { Reported, Subscribed(Subscribed), Changed(Changed), Watch(Watch), Observe(Observe), Recall(Recall), Keep(Keep), Configured(Configured), Follow(Follow) }
     pub enum Taken { Answer(Answer), Observation(Observation), Recollection(Recollection), Following(Result<Following, Unobserved>) }
     // One variant for each process, named for it; a process that ends one way carries nothing.
     pub enum Outcome { Report(Reporting), Watch(Watching), Subscribe, Configure(Configuring), Unwound }
@@ -107,7 +109,7 @@ impl From<Reported> for Gift { fn from(Reported: Reported) -> Gift { Gift::Repor
 givable! {
     Subscribed => (),
     Recall => Recollection,
-    Configure => Answer,
+    Keep => Answer,
     Configured => (),
     Changed => (),
     Watch => Answer,
