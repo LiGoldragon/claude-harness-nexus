@@ -1,8 +1,8 @@
 Signal
 [ harness:[ FilePath Tokens ]
-  claude_harness:[ Offset RowCount ]
+  claude_harness:[ Offset ReadFrom RowCount ]
   claude_harness:meta:[ Hooks HookClient ] ]
-[ Follow.{ FilePath Offset RowCount }
+[ Follow.{ FilePath ReadFrom RowCount }
   Install.{ HookClient Hooks } ]
 [ Following.{ Vector<Row> Offset }
   Installation.[ Installed.FilePath

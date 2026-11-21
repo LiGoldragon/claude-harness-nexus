@@ -65,7 +65,7 @@ impl MemoryProcess {
     /// A Watch's process, when the row count it is born with is configured.
     fn process_of(&self, watch: &Watch) -> Option<Process> {
         let row_count = self.remembered.row_count_option.clone()?;
-        Some(Process::Watch(WatchProcess { flow_id: watch.flow_id.clone(), file_path: watch.file_path.clone(), offset: watch.offset.clone(), row_count }))
+        Some(Process::Watch(WatchProcess { flow_id: watch.flow_id.clone(), file_path: watch.file_path.clone(), read_from: watch.read_from.clone(), row_count }))
     }
 
     /// A Watch of the same flow and file is kept as it is, with the offset read so far.
@@ -96,9 +96,9 @@ impl MemoryProcess {
     /// Applies each event and keeps the offset. What a Watch observes applies
     /// only while its Watch is kept. A session that has ended is forgotten, its
     /// Observed and its Watch, once its changes are answered.
-    fn observe(&mut self, observe: Observe) -> Observation {
+    fn observe(&mut self, observe: Observe) -> Result<Observation, Unremembered> {
         if observe.offset_option.is_some() && !self.holds_watch(&observe.flow_id) {
-            return Observation(Vec::new());
+            return Ok(Observation(Vec::new()));
         }
         let position = match self.remembered.observed_vector.iter().position(|observed| observed.flow_id == observe.flow_id) {
             Some(position) => position,
@@ -123,11 +123,13 @@ impl MemoryProcess {
             self.remembered.watch_vector.retain(|watch| watch.flow_id != observe.flow_id);
         } else if let Some(offset) = observe.offset_option {
             for watch in self.remembered.watch_vector.iter_mut().filter(|watch| watch.flow_id == observe.flow_id) {
-                watch.offset = offset.clone();
+                watch.read_from = ReadFrom::Offset(offset.clone());
             }
         }
-        self.keep();
-        Observation(changed)
+        match self.keep() {
+            Answer::Succeeded => Ok(Observation(changed)),
+            Answer::Failed => Err(Unremembered),
+        }
     }
 }
 
@@ -413,7 +415,7 @@ impl World {
             Gift::Recall(Recall) => {
                 self.signal.subscribe(&identity);
                 let recollection = Recollection(self.memory.remembered.observed_vector.clone());
-                self.give_back(identity, Taken::Recollection(recollection));
+                self.give_back(identity, Taken::Recollection(Ok(recollection)));
             }
             Gift::Watch(watch) => {
                 let answer = self.memory.watch(watch);

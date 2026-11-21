@@ -24,7 +24,8 @@ generated! {
     pub struct ProcessId(pub i64);
     pub struct UserId(pub i64);
     pub struct Caller { pub process_id: ProcessId, pub user_id: UserId }
-    pub struct SessionStart { pub session: Session, pub file_path: FilePath }
+    pub enum Source { Startup, Resume(Option<Tokens>), Compact }
+    pub struct SessionStart { pub session: Session, pub file_path: FilePath, pub source: Source }
     pub struct Stop { pub session: Session, pub response_option: Option<Response>, pub background_work_vector: Vec<BackgroundWork> }
     pub struct SessionEnd { pub session: Session, pub end_reason: EndReason }
     pub enum Hook {
@@ -58,10 +59,14 @@ generated! {
 
     // Library: the changes and their types, until the Memory page places them
     pub struct Offset(pub i64);
+    // Where a transcript is read from: its first row, the file's end, or an offset read so far.
+    pub enum ReadFrom { FileEnd, Offset(Offset) }
+    // What returns for a change when it was not kept.
+    pub struct Unremembered;
     pub struct RowCount(pub i64);
 
     // Memory
-    pub struct Watch { pub flow_id: FlowId, pub file_path: FilePath, pub offset: Offset }
+    pub struct Watch { pub flow_id: FlowId, pub file_path: FilePath, pub read_from: ReadFrom }
     pub struct Observe { pub flow_id: FlowId, pub event_vector: Vec<Event>, pub offset_option: Option<Offset> }
     pub struct Observation(pub Vec<Changed>);
     pub enum Answer { Succeeded, Failed }
@@ -71,7 +76,7 @@ generated! {
     pub struct Remembered { pub observed_vector: Vec<Observed>, pub watch_vector: Vec<Watch>, pub hooks: Hooks, pub hook_client_option: Option<HookClient>, pub row_count_option: Option<RowCount> }
 
     // Emission
-    pub struct Follow { pub file_path: FilePath, pub offset: Offset, pub row_count: RowCount }
+    pub struct Follow { pub file_path: FilePath, pub read_from: ReadFrom, pub row_count: RowCount }
     pub struct Following { pub row_vector: Vec<Row>, pub offset: Offset }
     pub enum Row { Assistant(Tokens), TurnStarted, TurnEnded, Other }
     pub struct Install { pub hook_client: HookClient, pub hooks: Hooks }
@@ -81,9 +86,9 @@ generated! {
 
     // Process
     pub struct ReportProcess { pub caller: Caller, pub hook: Hook }
-    pub struct WatchProcess { pub flow_id: FlowId, pub file_path: FilePath, pub offset: Offset, pub row_count: RowCount }
-    pub enum ReportTaken { Answer(Answer), Observation(Observation) }
-    pub enum WatchTaken { Following(Result<Following, Unobserved>), Observation(Observation) }
+    pub struct WatchProcess { pub flow_id: FlowId, pub file_path: FilePath, pub read_from: ReadFrom, pub row_count: RowCount }
+    pub enum ReportTaken { Answer(Answer), Observation(Result<Observation, Unremembered>) }
+    pub enum WatchTaken { Following(Result<Following, Unobserved>), Observation(Result<Observation, Unremembered>) }
     pub enum Reporting { Observed, Unremembered }
     pub enum Watching { Forgotten, Unfollowed }
     pub struct SubscribeProcess { pub caller: Caller }
@@ -97,7 +102,7 @@ generated! {
     // The enums over the Nexus's processes
     pub enum Process { Report(ReportProcess), Watch(WatchProcess), Subscribe(SubscribeProcess), Configure(ConfigureProcess), Prepare(PrepareProcess) }
     pub enum Gift { Reported, Subscribed(Subscribed), Changed(Changed), Watch(Watch), Observe(Observe), Recall(Recall), Keep(Keep), Configured(Configured), Follow(Follow), Install(Install), Prepared(Prepared) }
-    pub enum Taken { Answer(Answer), Observation(Observation), Recollection(Recollection), Following(Result<Following, Unobserved>), Installation(Result<Installation, Unobserved>) }
+    pub enum Taken { Answer(Answer), Observation(Result<Observation, Unremembered>), Recollection(Result<Recollection, Unremembered>), Following(Result<Following, Unobserved>), Installation(Result<Installation, Unobserved>) }
     // One variant for each process, named for it; a process that ends one way carries nothing.
     pub enum Outcome { Report(Reporting), Watch(Watching), Subscribe, Configure(Configuring), Prepare(Preparing), Unwound }
 }
@@ -115,12 +120,12 @@ impl From<Reported> for Gift { fn from(Reported: Reported) -> Gift { Gift::Repor
 
 givable! {
     Subscribed => (),
-    Recall => Recollection,
+    Recall => Result<Recollection, Unremembered>,
     Keep => Answer,
     Configured => (),
     Changed => (),
     Watch => Answer,
-    Observe => Observation,
+    Observe => Result<Observation, Unremembered>,
     Follow => Result<Following, Unobserved>,
     Install => Result<Installation, Unobserved>,
     Prepared => (),

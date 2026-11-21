@@ -309,7 +309,7 @@ rec {
       };
       "claude-harness-process" = rec {
         crateName = "claude-harness-process";
-        version = "0.5.0";
+        version = "0.6.0";
         edition = "2024";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./claude-harness-process; };
         libName = "claude_harness_process";

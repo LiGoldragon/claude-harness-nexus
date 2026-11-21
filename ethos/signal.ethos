@@ -1,10 +1,13 @@
 Signal
-[ harness:[ Session FilePath Response BackgroundWork EndReason ] ]
+[ harness:[ Session FilePath Response BackgroundWork EndReason Tokens ] ]
 [ Report.Hook
   Listening ]
 [ Reported
   Acknowledged ]
-[ Hook.[ SessionStart.{ Session FilePath }
+[ Source.[ Startup
+           Resume.Option<Tokens>
+           Compact ]
+  Hook.[ SessionStart.{ Session FilePath Source }
          UserPromptSubmit.Session
          PermissionRequest.Session
          PostToolUse.Session

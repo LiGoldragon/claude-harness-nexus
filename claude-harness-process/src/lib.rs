@@ -44,7 +44,12 @@ impl Identifiable for Hook {
 impl Observable for Hook {
     fn events(&self) -> Vec<Event> {
         match self {
-            Hook::SessionStart(_) => vec![Event::Started],
+            // A resume is Resumed, followed by its context's size; Resumed waits on the harness library.
+            Hook::SessionStart(start) => match &start.source {
+                Source::Startup => vec![Event::Started],
+                Source::Resume(tokens) => tokens.iter().copied().map(Event::ContextSize).collect(),
+                Source::Compact => vec![],
+            },
             Hook::UserPromptSubmit(_) => vec![Event::PromptSubmitted],
             Hook::PermissionRequest(_) => vec![Event::PermissionAsked],
             Hook::PostToolUse(_) => vec![Event::ToolUsed],
@@ -78,7 +83,12 @@ impl Processable for ReportProcess {
     fn begin<N: Giving<Gift>>(&mut self, mut manager: N) -> Option<Reporting> {
         manager.give(Reported);
         if let Hook::SessionStart(start) = &self.hook {
-            manager.give(Watch { flow_id: start.session.identify(), file_path: start.file_path.clone(), offset: Offset(0) });
+            // A session that started is read from its first row; one resumed or compacted from the file's end.
+            let read_from = match start.source {
+                Source::Startup => ReadFrom::Offset(Offset(0)),
+                Source::Resume(_) | Source::Compact => ReadFrom::FileEnd,
+            };
+            manager.give(Watch { flow_id: start.session.identify(), file_path: start.file_path.clone(), read_from });
         }
         manager.give(Observe { flow_id: self.hook.identify(), event_vector: self.hook.events(), offset_option: None });
         None
@@ -88,7 +98,8 @@ impl Processable for ReportProcess {
         match taken {
             ReportTaken::Answer(Answer::Succeeded) => None,
             ReportTaken::Answer(Answer::Failed) => Some(Reporting::Unremembered),
-            ReportTaken::Observation(observation) => {
+            ReportTaken::Observation(Err(Unremembered)) => Some(Reporting::Unremembered),
+            ReportTaken::Observation(Ok(observation)) => {
                 for changed in observation.0 {
                     manager.give(changed)
                 }
@@ -104,20 +115,22 @@ impl Processable for WatchProcess {
     type Outcome = Watching;
 
     fn begin<N: Giving<Gift>>(&mut self, mut manager: N) -> Option<Watching> {
-        manager.give(Follow { file_path: self.file_path.clone(), offset: self.offset.clone(), row_count: self.row_count.clone() });
+        manager.give(Follow { file_path: self.file_path.clone(), read_from: self.read_from.clone(), row_count: self.row_count.clone() });
         None
     }
 
     fn take<N: Giving<Gift>>(&mut self, taken: WatchTaken, mut manager: N) -> Option<Watching> {
         match taken {
             WatchTaken::Following(Ok(following)) => {
-                self.offset = following.offset;
+                self.read_from = ReadFrom::Offset(following.offset.clone());
                 let event_vector = following.row_vector.iter().flat_map(Observable::events).collect();
-                manager.give(Observe { flow_id: self.flow_id.clone(), event_vector, offset_option: Some(self.offset.clone()) });
+                manager.give(Observe { flow_id: self.flow_id.clone(), event_vector, offset_option: Some(following.offset) });
                 None
             }
             WatchTaken::Following(Err(_)) => Some(Watching::Unfollowed),
-            WatchTaken::Observation(observation) => {
+            // A Watch goes on when an Observe was not kept: its next carries the later offset.
+            WatchTaken::Observation(Err(Unremembered)) => None,
+            WatchTaken::Observation(Ok(observation)) => {
                 for changed in observation.0 {
                     manager.give(changed)
                 }
@@ -128,7 +141,7 @@ impl Processable for WatchProcess {
 }
 
 impl Processable for SubscribeProcess {
-    type Taken = Recollection;
+    type Taken = Result<Recollection, Unremembered>;
     type Gift = Gift;
     /// It ends one way, when its connection closes, and so declares no outcome.
     type Outcome = ();
@@ -139,8 +152,10 @@ impl Processable for SubscribeProcess {
     }
 
     /// It answers with every session as it is now, then rests while its connection is open.
-    fn take<N: Giving<Gift>>(&mut self, recollection: Recollection, mut manager: N) -> Option<()> {
-        manager.give(Subscribed(recollection.0));
+    fn take<N: Giving<Gift>>(&mut self, recollection: Result<Recollection, Unremembered>, mut manager: N) -> Option<()> {
+        if let Ok(recollection) = recollection {
+            manager.give(Subscribed(recollection.0));
+        }
         None
     }
 }
