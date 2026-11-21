@@ -40,7 +40,17 @@ impl MemoryProcess {
             .ok()
             .and_then(|file| Remembered::read_from(&mut BufReader::new(file)).ok().flatten())
             .unwrap_or_default();
-        MemoryProcess { remembered, file, count }
+        let mut memory = MemoryProcess { remembered, file, count };
+        memory.forget_ended();
+        memory
+    }
+
+    /// A Watch outlives no session: one whose session has ended is forgotten.
+    fn forget_ended(&mut self) {
+        let observed = &self.remembered.observed_vector;
+        self.remembered
+            .watch_vector
+            .retain(|watch| !observed.iter().any(|observed| observed.flow_id == watch.flow_id && observed.state == State::Ended));
     }
 
     fn keep(&self) -> Answer {
@@ -90,9 +100,7 @@ impl MemoryProcess {
             })
             .collect();
         let ended = observed.state == State::Ended;
-        if ended {
-            self.remembered.watch_vector.retain(|watch| watch.flow_id != observe.flow_id);
-        }
+        self.forget_ended();
         if let Some(offset) = observe.offset_option {
             for watch in self.remembered.watch_vector.iter_mut().filter(|watch| watch.flow_id == observe.flow_id) {
                 watch.offset = offset.clone();
