@@ -61,7 +61,7 @@ generated! {
     pub enum ReportTaken { Answer(Answer), Observation(Observation) }
     pub enum WatchTaken { Following(Result<Following, Unobserved>), Observation(Observation) }
     pub enum Reporting { Observed, Unremembered }
-    pub enum Watching { Missing, Unfollowed }
+    pub enum Watching { Missing, Unfollowed, Forgotten }
 
     // The enums over the Nexus's processes
     pub enum Process { Report(ReportProcess), Watch(WatchProcess) }

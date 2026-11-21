@@ -267,6 +267,12 @@ rec {
             packageId = "claude-harness-process";
           }
           {
+            name = "flow-ethos";
+            packageId = "flow-ethos";
+            rename = "flow";
+            usesDefaultFeatures = false;
+          }
+          {
             name = "harness-nexus-library";
             packageId = "harness-nexus-library";
             rename = "harness";

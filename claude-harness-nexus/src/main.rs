@@ -13,7 +13,8 @@ use std::thread;
 
 use claude_harness_process::*;
 use harness::{Observed, State, Tokens, Transitionable};
-use process::{Arrival, Gave, Given, Identity, Living, ProcessManager, Trace, Traced, Tracing};
+use flow::FlowId;
+use process::{Arrival, Ended, Gave, Given, Identity, Living, ProcessManager, Trace, Traced, Tracing};
 use transport::{Framed, Place, Placed};
 
 type Queue = Sender<Arrival<Process>>;
@@ -70,7 +71,8 @@ impl MemoryProcess {
         }
     }
 
-    fn observe(&mut self, observe: Observe) -> Observation {
+    /// Applies each event and keeps the offset; a session that has ended forgets its Watch.
+    fn observe(&mut self, observe: Observe) -> (Observation, bool) {
         let position = match self.remembered.observed_vector.iter().position(|observed| observed.flow_id == observe.flow_id) {
             Some(position) => position,
             None => {
@@ -87,13 +89,17 @@ impl MemoryProcess {
                 Changed { flow_id: observe.flow_id.clone(), event, state: observed.state.clone() }
             })
             .collect();
+        let ended = observed.state == State::Ended;
+        if ended {
+            self.remembered.watch_vector.retain(|watch| watch.flow_id != observe.flow_id);
+        }
         if let Some(offset) = observe.offset_option {
             for watch in self.remembered.watch_vector.iter_mut().filter(|watch| watch.flow_id == observe.flow_id) {
                 watch.offset = offset.clone();
             }
         }
         self.keep();
-        Observation(changed)
+        (Observation(changed), ended)
     }
 }
 
@@ -201,9 +207,21 @@ struct World {
     emission: EmissionSocket,
     archive: Archive,
     queue: Queue,
+    /// The living Watch processes, by the flow each follows.
+    watching: Vec<(FlowId, Identity)>,
 }
 
 impl World {
+    /// A Watch forgotten ends its process.
+    fn forget(&mut self, flow_id: &FlowId) {
+        let (forgotten, held): (Vec<_>, Vec<_>) = self.watching.drain(..).partition(|(watched, _)| watched == flow_id);
+        self.watching = held;
+        for (_, identity) in forgotten {
+            let outcome = Outcome::Watching(Watching::Forgotten);
+            let _ = self.queue.send(Arrival::Ended(Ended { identity, outcome }));
+        }
+    }
+
     fn give_back(&self, identity: Identity, taken: Taken) {
         let _ = self.queue.send(Arrival::Given(Given { identity, taken }));
     }
@@ -220,8 +238,12 @@ impl World {
                 }
             }
             Gift::Observe(observe) => {
-                let observation = self.memory.observe(observe);
+                let flow_id = observe.flow_id.clone();
+                let (observation, forgotten) = self.memory.observe(observe);
                 self.give_back(identity, Taken::Observation(observation));
+                if forgotten {
+                    self.forget(&flow_id);
+                }
             }
             Gift::Follow(follow) => self.emission.follow(identity, follow, self.queue.clone()),
         }
@@ -232,10 +254,16 @@ impl Tracing<Process> for World {
     fn trace(&mut self, trace: Traced<Process>) {
         let _ = trace.write_to(&mut self.archive.0);
         match trace {
-            Trace::Born(living) => self.signal.bind(&living),
+            Trace::Born(living) => {
+                self.signal.bind(&living);
+                if let Process::Watch(watch) = &living.process {
+                    self.watching.push((watch.flow_id.clone(), living.identity.clone()));
+                }
+            }
             Trace::Gave(gave) => self.carry(gave),
             Trace::Took(_) => {}
             Trace::Ended(ended) => {
+                self.watching.retain(|(_, identity)| *identity != ended.identity);
                 self.signal.close(&ended.identity);
                 self.emission.close(&ended.identity);
             }
@@ -275,7 +303,7 @@ fn main() -> ExitCode {
         }
     };
     let emission = EmissionSocket { place: place.clone(), lasting: BTreeMap::new() };
-    let mut world = World { signal, memory, emission, archive, queue };
+    let mut world = World { signal, memory, emission, archive, queue, watching: Vec::new() };
     ProcessManager::default().run(arrivals, &mut world);
     ExitCode::SUCCESS
 }

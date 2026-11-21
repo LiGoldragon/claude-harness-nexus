@@ -92,11 +92,13 @@ pub trait Unwindable {
 /// The trace of one Nexus's processes.
 pub type Traced<P> = Trace<P, <P as Processable>::Gift, <P as Processable>::Taken, <P as Processable>::Outcome>;
 
-/// What the queue yields: a process to be born, or a thing for a living one.
+/// What the queue yields: a process to be born, a thing for a living one, or
+/// the end of one, which is taken out of the table at that moment.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Arrival<P: Processable> {
     Born { owner: Option<Identity>, process: P },
     Given(Given<P::Taken>),
+    Ended(Ended<P::Outcome>),
 }
 
 /// Where the trace goes: every gift is carried from here, every end announced.
@@ -146,6 +148,11 @@ where
             match arrival {
                 Arrival::Born { owner, process } => self.bear(owner, process, world),
                 Arrival::Given(given) => self.hand(given, world),
+                Arrival::Ended(ended) => {
+                    if self.table.iter().any(|entry| entry.living.identity == ended.identity) {
+                        self.end(ended.identity, ended.outcome, world);
+                    }
+                }
             }
         }
         self.end_all(world);

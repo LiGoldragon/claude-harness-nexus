@@ -54,6 +54,7 @@ name = "claude-harness-nexus"
 version = "0.1.0"
 dependencies = [
  "claude-harness-process",
+ "flow-ethos",
  "harness-nexus-library",
  "process",
  "rkyv",

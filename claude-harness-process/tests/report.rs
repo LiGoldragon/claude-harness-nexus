@@ -83,3 +83,19 @@ fn an_owned_process_ends_before_its_owner_the_last_born_first() {
         .collect();
     assert_eq!(ended, vec![identity(1, &[2]), identity(1, &[1, 1]), identity(1, &[1]), identity(1, &[])]);
 }
+
+#[test]
+fn an_end_from_outside_takes_a_living_process_out_and_lets_go_of_a_gone_one() {
+    let watch = Process::Watch(WatchProcess { flow_id: FlowId("0ea2f9".into()), file_path: harness::FilePath("/t/0ea2f9.jsonl".into()), offset: Offset(0), count: Count(64) });
+    let forgotten = || Outcome::Watching(Watching::Forgotten);
+    let mut manager = ProcessManager::default();
+    let mut world = World::default();
+    let queue = vec![
+        Arrival::Born { owner: None, process: watch },
+        Arrival::Ended(process::Ended { identity: identity(1, &[]), outcome: forgotten() }),
+        Arrival::Ended(process::Ended { identity: identity(1, &[]), outcome: forgotten() }),
+    ];
+    manager.run(queue, &mut world);
+    let ended: Vec<_> = world.0.into_iter().filter(|trace| matches!(trace, Trace::Ended(_))).collect();
+    assert_eq!(ended, vec![Trace::Ended(process::Ended { identity: identity(1, &[]), outcome: forgotten() })]);
+}
