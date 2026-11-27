@@ -1,5 +1,5 @@
 //! The processes of the Claude Harness Nexus, written by hand as ethos-zero
-//! 31.1.0 (6e67995) writes them from ethos/process.ethos read with the other
+//! 32.0.0 (a6e019b) writes them from ethos/process.ethos read with the other
 //! roots. ethos-zero refuses process.ethos as Foreign.Changed: Subscribe,
 //! Subscribed and Changed are signal-harness's and Prepare and Prepared
 //! signal-claude-prepare's, and it resolves no import across crates. This module
@@ -206,7 +206,70 @@ pub enum Taken {
     ),
 }
 #[rustfmt::skip]
-impl process::Givable for Reported {
+impl process::Givable<ReportProcess> for Reported {
+    type Returned = ();
+}
+#[rustfmt::skip]
+impl process::Givable<ReportProcess> for claude_harness::memory::Watch {
+    type Returned = process::Answer;
+}
+#[rustfmt::skip]
+impl process::Givable<ReportProcess> for claude_harness::memory::Observe {
+    type Returned = core::result::Result<
+        claude_harness::memory::Observation,
+        process::Unremembered,
+    >;
+}
+#[rustfmt::skip]
+impl process::Givable<ReportProcess> for Changed {
+    type Returned = ();
+}
+#[rustfmt::skip]
+impl process::Givable<WatchProcess> for claude_harness::emission::Follow_Data {
+    type Returned = core::result::Result<
+        claude_harness::emission::Following_Data,
+        process::Unobserved,
+    >;
+}
+#[rustfmt::skip]
+impl process::Givable<WatchProcess> for claude_harness::memory::Observe {
+    type Returned = core::result::Result<
+        claude_harness::memory::Observation,
+        process::Unremembered,
+    >;
+}
+#[rustfmt::skip]
+impl process::Givable<WatchProcess> for Changed {
+    type Returned = ();
+}
+#[rustfmt::skip]
+impl process::Givable<SubscribeProcess> for claude_harness::memory::Recall {
+    type Returned = core::result::Result<
+        claude_harness::memory::Recollection,
+        process::Unremembered,
+    >;
+}
+#[rustfmt::skip]
+impl process::Givable<SubscribeProcess> for Subscribed {
+    type Returned = ();
+}
+#[rustfmt::skip]
+impl process::Givable<ConfigureProcess> for claude_harness::memory::Keep {
+    type Returned = process::Answer;
+}
+#[rustfmt::skip]
+impl process::Givable<ConfigureProcess> for Configured {
+    type Returned = ();
+}
+#[rustfmt::skip]
+impl process::Givable<PrepareProcess> for claude_harness::emission::Install_Data {
+    type Returned = core::result::Result<
+        claude_harness::emission::Installation_Data,
+        process::Unobserved,
+    >;
+}
+#[rustfmt::skip]
+impl process::Givable<PrepareProcess> for Prepared {
     type Returned = ();
 }
 #[rustfmt::skip]
@@ -216,21 +279,10 @@ impl core::convert::From<Reported> for Gift {
     }
 }
 #[rustfmt::skip]
-impl process::Givable for claude_harness::memory::Watch {
-    type Returned = process::Answer;
-}
-#[rustfmt::skip]
 impl core::convert::From<claude_harness::memory::Watch> for Gift {
     fn from(gift: claude_harness::memory::Watch) -> Gift {
         Gift::Watch(gift)
     }
-}
-#[rustfmt::skip]
-impl process::Givable for claude_harness::memory::Observe {
-    type Returned = core::result::Result<
-        claude_harness::memory::Observation,
-        process::Unremembered,
-    >;
 }
 #[rustfmt::skip]
 impl core::convert::From<claude_harness::memory::Observe> for Gift {
@@ -239,21 +291,10 @@ impl core::convert::From<claude_harness::memory::Observe> for Gift {
     }
 }
 #[rustfmt::skip]
-impl process::Givable for Changed {
-    type Returned = ();
-}
-#[rustfmt::skip]
 impl core::convert::From<Changed> for Gift {
     fn from(gift: Changed) -> Gift {
         Gift::Changed(gift)
     }
-}
-#[rustfmt::skip]
-impl process::Givable for claude_harness::emission::Follow_Data {
-    type Returned = core::result::Result<
-        claude_harness::emission::Following_Data,
-        process::Unobserved,
-    >;
 }
 #[rustfmt::skip]
 impl core::convert::From<claude_harness::emission::Follow_Data> for Gift {
@@ -262,21 +303,10 @@ impl core::convert::From<claude_harness::emission::Follow_Data> for Gift {
     }
 }
 #[rustfmt::skip]
-impl process::Givable for claude_harness::memory::Recall {
-    type Returned = core::result::Result<
-        claude_harness::memory::Recollection,
-        process::Unremembered,
-    >;
-}
-#[rustfmt::skip]
 impl core::convert::From<claude_harness::memory::Recall> for Gift {
     fn from(gift: claude_harness::memory::Recall) -> Gift {
         Gift::Recall(gift)
     }
-}
-#[rustfmt::skip]
-impl process::Givable for Subscribed {
-    type Returned = ();
 }
 #[rustfmt::skip]
 impl core::convert::From<Subscribed> for Gift {
@@ -285,18 +315,10 @@ impl core::convert::From<Subscribed> for Gift {
     }
 }
 #[rustfmt::skip]
-impl process::Givable for claude_harness::memory::Keep {
-    type Returned = process::Answer;
-}
-#[rustfmt::skip]
 impl core::convert::From<claude_harness::memory::Keep> for Gift {
     fn from(gift: claude_harness::memory::Keep) -> Gift {
         Gift::Keep(gift)
     }
-}
-#[rustfmt::skip]
-impl process::Givable for Configured {
-    type Returned = ();
 }
 #[rustfmt::skip]
 impl core::convert::From<Configured> for Gift {
@@ -305,21 +327,10 @@ impl core::convert::From<Configured> for Gift {
     }
 }
 #[rustfmt::skip]
-impl process::Givable for claude_harness::emission::Install_Data {
-    type Returned = core::result::Result<
-        claude_harness::emission::Installation_Data,
-        process::Unobserved,
-    >;
-}
-#[rustfmt::skip]
 impl core::convert::From<claude_harness::emission::Install_Data> for Gift {
     fn from(gift: claude_harness::emission::Install_Data) -> Gift {
         Gift::Install(gift)
     }
-}
-#[rustfmt::skip]
-impl process::Givable for Prepared {
-    type Returned = ();
 }
 #[rustfmt::skip]
 impl core::convert::From<Prepared> for Gift {
@@ -346,73 +357,112 @@ impl process::Ownable for Process {
     }
 }
 #[rustfmt::skip]
-impl process::Processable for Process {
+impl process::Dispatchable for Process {
     type Taken = Taken;
     type Gift = Gift;
     type Outcome = Outcome;
-    fn begin<N: process::Giving<Gift>>(
+    fn dispatch_begin(
         &mut self,
-        giving: N,
+        receive: impl FnMut(Gift),
     ) -> core::option::Option<Outcome> {
         match self {
             Process::Report(report) => {
-                process::Processable::begin(report, giving).map(Outcome::Report)
+                process::Processable::begin(
+                        report,
+                        process::Giver::<ReportProcess, _>::from(receive),
+                    )
+                    .map(Outcome::Report)
             }
             Process::Watch(watch) => {
-                process::Processable::begin(watch, giving).map(Outcome::Watch)
+                process::Processable::begin(
+                        watch,
+                        process::Giver::<WatchProcess, _>::from(receive),
+                    )
+                    .map(Outcome::Watch)
             }
             Process::Subscribe(subscribe) => {
-                process::Processable::begin(subscribe, giving)
+                process::Processable::begin(
+                        subscribe,
+                        process::Giver::<SubscribeProcess, _>::from(receive),
+                    )
                     .map(|()| Outcome::Subscribe)
             }
             Process::Configure(configure) => {
-                process::Processable::begin(configure, giving).map(Outcome::Configure)
+                process::Processable::begin(
+                        configure,
+                        process::Giver::<ConfigureProcess, _>::from(receive),
+                    )
+                    .map(Outcome::Configure)
             }
             Process::Prepare(prepare) => {
-                process::Processable::begin(prepare, giving).map(Outcome::Prepare)
+                process::Processable::begin(
+                        prepare,
+                        process::Giver::<PrepareProcess, _>::from(receive),
+                    )
+                    .map(Outcome::Prepare)
             }
         }
     }
-    fn take<N: process::Giving<Gift>>(
+    fn dispatch_take(
         &mut self,
         taken: Taken,
-        giving: N,
+        receive: impl FnMut(Gift),
     ) -> core::option::Option<Outcome> {
         match (self, taken) {
             (Process::Report(report), Taken::Answer(carried)) => {
-                process::Processable::take(report, ReportTaken::Answer(carried), giving)
+                process::Processable::take(
+                        report,
+                        ReportTaken::Answer(carried),
+                        process::Giver::<ReportProcess, _>::from(receive),
+                    )
                     .map(Outcome::Report)
             }
             (Process::Report(report), Taken::Observation(carried)) => {
                 process::Processable::take(
                         report,
                         ReportTaken::Observation(carried),
-                        giving,
+                        process::Giver::<ReportProcess, _>::from(receive),
                     )
                     .map(Outcome::Report)
             }
             (Process::Watch(watch), Taken::Following(carried)) => {
-                process::Processable::take(watch, WatchTaken::Following(carried), giving)
+                process::Processable::take(
+                        watch,
+                        WatchTaken::Following(carried),
+                        process::Giver::<WatchProcess, _>::from(receive),
+                    )
                     .map(Outcome::Watch)
             }
             (Process::Watch(watch), Taken::Observation(carried)) => {
                 process::Processable::take(
                         watch,
                         WatchTaken::Observation(carried),
-                        giving,
+                        process::Giver::<WatchProcess, _>::from(receive),
                     )
                     .map(Outcome::Watch)
             }
             (Process::Subscribe(subscribe), Taken::Recollection(carried)) => {
-                process::Processable::take(subscribe, carried, giving)
+                process::Processable::take(
+                        subscribe,
+                        carried,
+                        process::Giver::<SubscribeProcess, _>::from(receive),
+                    )
                     .map(|()| Outcome::Subscribe)
             }
             (Process::Configure(configure), Taken::Answer(carried)) => {
-                process::Processable::take(configure, carried, giving)
+                process::Processable::take(
+                        configure,
+                        carried,
+                        process::Giver::<ConfigureProcess, _>::from(receive),
+                    )
                     .map(Outcome::Configure)
             }
             (Process::Prepare(prepare), Taken::Installation(carried)) => {
-                process::Processable::take(prepare, carried, giving)
+                process::Processable::take(
+                        prepare,
+                        carried,
+                        process::Giver::<PrepareProcess, _>::from(receive),
+                    )
                     .map(Outcome::Prepare)
             }
             _ => core::option::Option::None,

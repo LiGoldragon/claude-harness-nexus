@@ -108,7 +108,7 @@ impl Processable for ReportProcess {
     type Gift = Gift;
     type Outcome = Reporting;
 
-    fn begin<N: Giving<Gift>>(&mut self, mut manager: N) -> Option<Reporting> {
+    fn begin<N: Giving<Self>>(&mut self, mut manager: N) -> Option<Reporting> {
         manager.give(Reported {});
         if let Hook::SessionStart(start) = &self.hook {
             // A session that started is read from its first row; one resumed or compacted from the file's end.
@@ -122,7 +122,7 @@ impl Processable for ReportProcess {
         None
     }
 
-    fn take<N: Giving<Gift>>(&mut self, taken: ReportTaken, mut manager: N) -> Option<Reporting> {
+    fn take<N: Giving<Self>>(&mut self, taken: ReportTaken, mut manager: N) -> Option<Reporting> {
         match taken {
             ReportTaken::Answer(Answer::Succeeded) => None,
             ReportTaken::Answer(Answer::Failed) => Some(Reporting::Unremembered),
@@ -142,12 +142,12 @@ impl Processable for WatchProcess {
     type Gift = Gift;
     type Outcome = Watching;
 
-    fn begin<N: Giving<Gift>>(&mut self, mut manager: N) -> Option<Watching> {
+    fn begin<N: Giving<Self>>(&mut self, mut manager: N) -> Option<Watching> {
         manager.give(Follow_Data { file_path: self.file_path.clone(), read_from: self.read_from.clone(), row_count: self.row_count });
         None
     }
 
-    fn take<N: Giving<Gift>>(&mut self, taken: WatchTaken, mut manager: N) -> Option<Watching> {
+    fn take<N: Giving<Self>>(&mut self, taken: WatchTaken, mut manager: N) -> Option<Watching> {
         match taken {
             WatchTaken::Following(Ok(following)) => {
                 self.read_from = ReadFrom::Offset(following.offset);
@@ -174,13 +174,13 @@ impl Processable for SubscribeProcess {
     /// It ends one way, when its connection closes, and so declares no outcome.
     type Outcome = ();
 
-    fn begin<N: Giving<Gift>>(&mut self, mut manager: N) -> Option<()> {
+    fn begin<N: Giving<Self>>(&mut self, mut manager: N) -> Option<()> {
         manager.give(Recall {});
         None
     }
 
     /// It answers with every session as it is now, then rests while its connection is open.
-    fn take<N: Giving<Gift>>(&mut self, recollection: SubscribeTaken, mut manager: N) -> Option<()> {
+    fn take<N: Giving<Self>>(&mut self, recollection: SubscribeTaken, mut manager: N) -> Option<()> {
         if let Ok(recollection) = recollection {
             manager.give(Subscribed(recollection.0));
         }
@@ -193,12 +193,12 @@ impl Processable for ConfigureProcess {
     type Gift = Gift;
     type Outcome = Configuring;
 
-    fn begin<N: Giving<Gift>>(&mut self, mut manager: N) -> Option<Configuring> {
+    fn begin<N: Giving<Self>>(&mut self, mut manager: N) -> Option<Configuring> {
         manager.give(Keep(self.set.clone()));
         None
     }
 
-    fn take<N: Giving<Gift>>(&mut self, answer: ConfigureTaken, mut manager: N) -> Option<Configuring> {
+    fn take<N: Giving<Self>>(&mut self, answer: ConfigureTaken, mut manager: N) -> Option<Configuring> {
         match answer {
             Answer::Succeeded => {
                 manager.give(Configured(self.set.clone()));
@@ -217,7 +217,7 @@ impl Processable for PrepareProcess {
     type Gift = Gift;
     type Outcome = Preparing;
 
-    fn begin<N: Giving<Gift>>(&mut self, mut manager: N) -> Option<Preparing> {
+    fn begin<N: Giving<Self>>(&mut self, mut manager: N) -> Option<Preparing> {
         match &self.hook_client_option {
             Some(hook_client) => {
                 manager.give(Install_Data { hook_client: hook_client.clone(), hooks: self.hooks.clone() });
@@ -230,7 +230,7 @@ impl Processable for PrepareProcess {
         }
     }
 
-    fn take<N: Giving<Gift>>(&mut self, installation: PrepareTaken, mut manager: N) -> Option<Preparing> {
+    fn take<N: Giving<Self>>(&mut self, installation: PrepareTaken, mut manager: N) -> Option<Preparing> {
         let (prepared, preparing) = match installation {
             Ok(Installation_Data::Installed(file_path)) => (Some(file_path), Preparing::Installed),
             Ok(Installation_Data::Uninstalled(_)) => (None, Preparing::Uninstalled),

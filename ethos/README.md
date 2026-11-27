@@ -1,5 +1,5 @@
-The ethos of each root of the Claude Harness Nexus, in the forms of ethos-zero 31.1.0
-(github:LiGoldragon/ethos-zero, 6e67995).
+The ethos of each root of the Claude Harness Nexus, in the forms of ethos-zero 32.0.0
+(github:LiGoldragon/ethos-zero, a6e019b).
 
 signal.ethos, meta.ethos, emission.ethos, library.ethos and memory.ethos are checked and
 generated together, into claude-harness-process/src/generated/, which is checked in:
