@@ -23,7 +23,9 @@ ethos-zero 'Generate.{ [ «ethos/signal.ethos» «ethos/meta.ethos» «ethos/emi
   under the root. A Discover given a SessionRoot reports at its start the transcript of each
   session a live Claude process holds, as the sessions directory records it, so a session
   made or resumed while no discovery ran is watched too; the Discover is born with the
-  SessionRoot configured, and one configured anew bears it again. A Follow given a SessionRoot witnesses the session its transcript is named
+  SessionRoot configured, and one configured anew bears it again. A TranscriptRoot configured
+  with no SessionRoot is accepted, and reported on the Nexus's stderr as each discovery is
+  born (TranscriptRootWithoutSessionRoot): its sessions are told Ended only by a hook. A Follow given a SessionRoot witnesses the session its transcript is named
   for: each process whose record names the session is held by a pidfd, taken only when the
   record's procStart is the start /proc gives that pid, so a pid given again is not taken.
   When no live process holds the session, at the start or once the last pidfd is readable,

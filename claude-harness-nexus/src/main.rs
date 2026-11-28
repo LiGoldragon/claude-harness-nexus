@@ -93,6 +93,16 @@ impl MemoryProcess {
         Some(DiscoverProcess { file_path, session_root_option: self.records.session_root_option.clone() })
     }
 
+    /// A transcript root configured with no sessions directory: what is
+    /// discovered under it is told Ended only by a SessionEnd hook. It is
+    /// accepted, and reported as each discovery is born.
+    fn unwitnessed(&self) -> Option<Unwitnessed> {
+        match (&self.records.transcript_root_option, &self.records.session_root_option) {
+            (Some(transcript_root), None) => Some(Unwitnessed(transcript_root.clone())),
+            _ => None,
+        }
+    }
+
     /// A Prepare's process, with its caller, and the hook client and the hooks as configured now.
     fn prepare_process(&self, caller: Caller) -> Process {
         Process::Prepare(PrepareProcess { caller, hook_client_option: self.records.hook_client_option.clone(), hooks: self.records.hooks.clone() })
@@ -156,6 +166,16 @@ impl MemoryProcess {
             Answer::Succeeded => Ok(Observation(changed)),
             Answer::Failed => Err(Unremembered {}),
         }
+    }
+}
+
+/// The report of a transcript root configured with no sessions directory.
+#[derive(Debug, PartialEq, Eq)]
+struct Unwitnessed(FilePath);
+
+impl std::fmt::Display for Unwitnessed {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "TranscriptRootWithoutSessionRoot: {} is discovered with no SessionRoot configured; a discovered session is told Ended only by a SessionEnd hook", self.0.0)
     }
 }
 
@@ -420,7 +440,8 @@ impl World {
     /// The discovery of the transcript root configured is given its process
     /// where it has none: at the program's start, when the translator begins to
     /// listen, and when the configuration is kept. A root or sessions directory
-    /// replaced ends the discovery born with the old one.
+    /// replaced ends the discovery born with the old one. One born with no
+    /// sessions directory is reported.
     fn bear_discovery(&mut self) {
         let configured = self.memory.discover_process();
         if let Some((discover, identity)) = &self.discovering {
@@ -431,6 +452,9 @@ impl World {
             self.discovering = None;
         }
         let Some(discover) = configured else { return };
+        if let Some(unwitnessed) = self.memory.unwitnessed() {
+            eprintln!("{unwitnessed}");
+        }
         let identity = self.roots.draw();
         self.discovering = Some((discover.clone(), identity.clone()));
         let _ = self.queue.send(Arrived::Arrival(Arrival::Born(Living { identity, process: Process::Discover(discover) })));
@@ -633,5 +657,18 @@ mod tests {
         assert_eq!(memory.configure(Keep(Set::SessionRoot(session_root.clone()))), Answer::Succeeded);
         let Some(Process::Watch(watch)) = memory.process_of(&memory.records.watch_vector[0].clone()) else { panic!("a Watch's process") };
         assert_eq!(watch.session_root_option, Some(session_root));
+    }
+
+    #[test]
+    fn a_transcript_root_with_no_sessions_directory_is_accepted_and_reported() {
+        let mut memory = memory("unwitnessed");
+        let transcript_root = FilePath("/home/li/.claude/projects".into());
+        assert_eq!(memory.configure(Keep(Set::TranscriptRoot(transcript_root.clone()))), Answer::Succeeded);
+        assert_eq!(memory.discover_process().map(|discover| discover.file_path), Some(transcript_root.clone()));
+        assert_eq!(memory.unwitnessed(), Some(Unwitnessed(transcript_root)));
+        let session_root = SessionRoot(FilePath("/home/li/.claude/sessions".into()));
+        assert_eq!(memory.configure(Keep(Set::SessionRoot(session_root.clone()))), Answer::Succeeded);
+        assert_eq!(memory.unwitnessed(), None);
+        assert_eq!(memory.discover_process().and_then(|discover| discover.session_root_option), Some(session_root));
     }
 }
