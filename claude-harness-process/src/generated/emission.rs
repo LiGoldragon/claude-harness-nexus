@@ -25,6 +25,7 @@ pub struct Follow_Data {
     pub file_path: harness::FilePath,
     pub read_from: claude_harness::ReadFrom,
     pub row_count: claude_harness::RowCount,
+    pub session_root_option: core::option::Option<claude_harness::SessionRoot>,
 }
 #[rustfmt::skip]
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
@@ -53,6 +54,7 @@ pub enum Emission {
 pub struct Following_Data {
     pub row_vector: alloc::vec::Vec<Row>,
     pub offset: claude_harness::Offset,
+    pub end_reason_option: core::option::Option<harness::EndReason>,
 }
 #[rustfmt::skip]
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]

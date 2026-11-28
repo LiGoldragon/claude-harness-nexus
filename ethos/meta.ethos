@@ -1,6 +1,6 @@
 Signal
 [ harness:[ FilePath ]
-  claude_harness:[ RowCount ] ]
+  claude_harness:[ RowCount SessionRoot ] ]
 [ Configure.Set ]
 [ Configured.Set ]
 [ HookName.String
@@ -10,4 +10,5 @@ Signal
         RemoveHook.HookName
         HookClient
         RowCount
-        TranscriptRoot.FilePath ] ]
+        TranscriptRoot.FilePath
+        SessionRoot ] ]

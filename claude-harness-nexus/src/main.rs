@@ -18,12 +18,15 @@ use process::{Answer, Arrival, Caller, Ended, Gave, Given, Identity, Living, Mom
 use transport::{Framed, Place, Placed};
 
 /// What the manager's queue carries: an arrival for the manager; the library's
-/// announcement that the translator has begun to listen; or a Prepare and its
-/// caller, whose process is born with the configuration Memory holds.
+/// announcement that the translator has begun to listen; a Prepare and its
+/// caller, whose process is born with the configuration Memory holds; or the
+/// news that the Watches born with an earlier sessions directory have ended,
+/// to be born again with the one configured now.
 enum Arrived {
     Arrival(Arrival<Process>),
     Listening,
     Preparing(Identity, Caller),
+    Reconfigured,
 }
 
 type Queue = Sender<Arrived>;
@@ -38,6 +41,7 @@ struct Records {
     hook_client_option: Option<HookClient>,
     row_count_option: Option<RowCount>,
     transcript_root_option: Option<FilePath>,
+    session_root_option: Option<SessionRoot>,
 }
 
 /// The memory process: one change at a time, each kept before it is answered.
@@ -50,7 +54,7 @@ impl MemoryProcess {
     /// A memory file that is there and cannot be read is not overwritten: the program does not start.
     fn open(place: &Place) -> std::io::Result<MemoryProcess> {
         let file = place.path(Placed::Memory(VERSION));
-        let empty = || Records { observed_vector: Vec::new(), watch_vector: Vec::new(), hooks: Hooks(Vec::new()), hook_client_option: None, row_count_option: None, transcript_root_option: None };
+        let empty = || Records { observed_vector: Vec::new(), watch_vector: Vec::new(), hooks: Hooks(Vec::new()), hook_client_option: None, row_count_option: None, transcript_root_option: None, session_root_option: None };
         let records = match File::open(&file) {
             Ok(opened) => Records::read_from(&mut BufReader::new(opened))?.unwrap_or_else(empty),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => empty(),
@@ -74,10 +78,12 @@ impl MemoryProcess {
         self.records.watch_vector.iter().any(|watch| watch.flow_id == *flow_id)
     }
 
-    /// A Watch's process, when the row count it is born with is configured.
+    /// A Watch's process, when the row count it is born with is configured,
+    /// born with the sessions directory configured, if one is.
     fn process_of(&self, watch: &Watch) -> Option<Process> {
         let row_count = self.records.row_count_option?;
-        Some(Process::Watch(WatchProcess { flow_id: watch.flow_id.clone(), file_path: watch.file_path.clone(), read_from: watch.read_from.clone(), row_count }))
+        let session_root_option = self.records.session_root_option.clone();
+        Some(Process::Watch(WatchProcess { flow_id: watch.flow_id.clone(), file_path: watch.file_path.clone(), read_from: watch.read_from.clone(), row_count, session_root_option }))
     }
 
     /// The discovery's process, when the transcript root it is born with is configured.
@@ -109,13 +115,15 @@ impl MemoryProcess {
             Set::HookClient(hook_client) => self.records.hook_client_option = Some(hook_client),
             Set::RowCount(row_count) => self.records.row_count_option = Some(row_count),
             Set::TranscriptRoot(file_path) => self.records.transcript_root_option = Some(file_path),
+            Set::SessionRoot(session_root) => self.records.session_root_option = Some(session_root),
         }
         self.keep()
     }
 
     /// Applies each event and keeps the offset. What a Watch observes applies
-    /// only while its Watch is kept. A session that has ended is forgotten, its
-    /// Observed and its Watch, once its changes are answered.
+    /// only while its Watch is kept. A session that has ended keeps its
+    /// Observed, Ended, and its Watch, since a resume writes on in the same
+    /// transcript; a second end is no change, as a second TurnEnded is not.
     fn observe(&mut self, observe: Observe) -> Result<Observation, Unremembered> {
         if observe.offset_option.is_some() && !self.holds_watch(&observe.flow_id) {
             return Ok(Observation(Vec::new()));
@@ -134,14 +142,11 @@ impl MemoryProcess {
             .filter_map(|event| {
                 let before = observed.state.clone();
                 observed.after(event.clone());
-                let witnessed = matches!(event, Event::PromptSubmitted | Event::TurnEnded) && observed.state == before;
+                let witnessed = matches!(event, Event::PromptSubmitted | Event::TurnEnded | Event::Ended(_)) && observed.state == before;
                 (!witnessed).then(|| Changed { flow_id: observe.flow_id.clone(), event, state: observed.state.clone() })
             })
             .collect();
-        if observed.state == State::Ended {
-            self.records.observed_vector.remove(position);
-            self.records.watch_vector.retain(|watch| watch.flow_id != observe.flow_id);
-        } else if let Some(offset) = observe.offset_option {
+        if let Some(offset) = observe.offset_option {
             for watch in self.records.watch_vector.iter_mut().filter(|watch| watch.flow_id == observe.flow_id) {
                 watch.read_from = ReadFrom::Offset(offset);
             }
@@ -440,6 +445,15 @@ impl World {
         }
     }
 
+    /// A sessions directory configured anew ends each living Watch, and the
+    /// queue, past their ends, bears them again with it.
+    fn reconfigure(&mut self) {
+        for identity in self.watching.values() {
+            self.end(identity.clone(), Outcome::Watch(Watching::Reconfigured));
+        }
+        let _ = self.queue.send(Arrived::Reconfigured);
+    }
+
     fn born(&mut self, living: &Living<Process>) {
         self.signal.bind(living);
         if let Process::Watch(watch) = &living.process
@@ -468,7 +482,11 @@ impl World {
                 self.bear_watches();
             }
             Gift::Keep(keep) => {
+                let session_root = self.memory.records.session_root_option.clone();
                 let answer = self.memory.configure(keep);
+                if self.memory.records.session_root_option != session_root {
+                    self.reconfigure();
+                }
                 self.give_back(identity, Taken::Answer(answer));
                 self.bear_watches();
                 self.bear_discovery();
@@ -546,6 +564,7 @@ fn main() -> ExitCode {
                 world.bear_watches();
                 world.bear_discovery();
             }
+            Arrived::Reconfigured => world.bear_watches(),
             Arrived::Preparing(identity, caller) => {
                 let process = world.memory.prepare_process(caller);
                 manager.arrive(Arrival::Born(Living { identity, process }), &mut world)
@@ -559,4 +578,61 @@ fn main() -> ExitCode {
 fn now() -> Moment {
     let since = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
     Moment(i64::try_from(since.as_nanos()).unwrap_or(i64::MAX))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use harness::{EndReason, Flow};
+
+    const FLOW: &str = "5e7d1c";
+
+    fn memory(name: &str) -> MemoryProcess {
+        let directory = std::env::temp_dir().join(format!("claude-harness-memory-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("the directory");
+        let records = Records { observed_vector: Vec::new(), watch_vector: Vec::new(), hooks: Hooks(Vec::new()), hook_client_option: None, row_count_option: Some(RowCount(64)), transcript_root_option: None, session_root_option: None };
+        let mut memory = MemoryProcess { records, file: directory.join("memory.signal") };
+        let watch = Watch { flow_id: FlowId(FLOW.into()), file_path: FilePath(format!("/t/{FLOW}.jsonl")), read_from: ReadFrom::Offset(Offset(0)) };
+        assert_eq!(memory.watch(watch), Answer::Succeeded);
+        memory
+    }
+
+    fn observe(memory: &mut MemoryProcess, events: Vec<Event>, offset: i64) -> Vec<Changed> {
+        memory.observe(Observe { flow_id: FlowId(FLOW.into()), event_vector: events, offset_option: Some(Offset(offset)) }).expect("an observation").0
+    }
+
+    fn changed(event: Event, state: State) -> Changed {
+        Changed { flow_id: FlowId(FLOW.into()), event, state }
+    }
+
+    #[test]
+    fn an_ended_session_keeps_its_watch_and_a_second_end_is_no_change() {
+        let mut memory = memory("ended");
+        assert_eq!(observe(&mut memory, vec![Event::PromptSubmitted, Event::TurnEnded, Event::Ended(EndReason::Died)], 120), vec![
+            changed(Event::PromptSubmitted, State::Flowing(Flow::Working)),
+            changed(Event::TurnEnded, State::Flowing(Flow::Rested)),
+            changed(Event::Ended(EndReason::Died), State::Ended),
+        ]);
+        assert!(memory.holds_watch(&FlowId(FLOW.into())));
+        assert_eq!(memory.records.watch_vector[0].read_from, ReadFrom::Offset(Offset(120)));
+        assert_eq!(memory.records.observed_vector[0].state, State::Ended);
+        let hooked = memory.observe(Observe { flow_id: FlowId(FLOW.into()), event_vector: vec![Event::Ended(EndReason::Exited)], offset_option: None }).expect("an observation").0;
+        assert!(hooked.is_empty());
+    }
+
+    #[test]
+    fn a_resumed_session_works_again() {
+        let mut memory = memory("resumed");
+        observe(&mut memory, vec![Event::Ended(EndReason::Died)], 0);
+        assert_eq!(observe(&mut memory, vec![Event::PromptSubmitted], 90), vec![changed(Event::PromptSubmitted, State::Flowing(Flow::Working))]);
+    }
+
+    #[test]
+    fn a_watch_is_born_with_the_sessions_directory_configured() {
+        let mut memory = memory("configured");
+        let session_root = SessionRoot(FilePath("/home/li/.claude/sessions".into()));
+        assert_eq!(memory.configure(Keep(Set::SessionRoot(session_root.clone()))), Answer::Succeeded);
+        let Some(Process::Watch(watch)) = memory.process_of(&memory.records.watch_vector[0].clone()) else { panic!("a Watch's process") };
+        assert_eq!(watch.session_root_option, Some(session_root));
+    }
 }

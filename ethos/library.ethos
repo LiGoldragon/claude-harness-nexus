@@ -1,8 +1,9 @@
 Library
-[]
+[ harness:[ FilePath ] ]
 [ Offset.Integer
   ReadFrom.[ FileEnd
              Offset ]
-  RowCount.Integer ]
+  RowCount.Integer
+  SessionRoot.FilePath ]
 []
 []

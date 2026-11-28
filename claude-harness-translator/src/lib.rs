@@ -1,7 +1,8 @@
 //! The Claude Harness Nexus's translator: the one place that holds Claude
 //! Code's words. It reads a hook's payload into a Hook, follows a transcript
 //! for its Nexus, reading each new row, and discovers each session Claude
-//! starts under its transcript root.
+//! starts under its transcript root. A transcript's follow witnesses which live
+//! Claude processes hold its session, and tells the session's end when none does.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
@@ -147,7 +148,7 @@ impl Translatable for Row {
 fn rows_after(path: &str, offset: &Offset, row_count: &RowCount) -> io::Result<Following_Data> {
     let mut file = BufReader::new(File::open(path)?);
     file.seek(SeekFrom::Start(offset.0.max(0) as u64))?;
-    let mut rows = Following_Data { row_vector: Vec::new(), offset: *offset };
+    let mut rows = Following_Data { row_vector: Vec::new(), offset: *offset, end_reason_option: None };
     let mut line = Vec::new();
     while (rows.row_vector.len() as i64) < row_count.0 {
         line.clear();
@@ -207,38 +208,216 @@ fn closed(watching: &OwnedFd, stream: &UnixStream) -> io::Result<bool> {
     Ok(!waiting[1].revents().is_empty())
 }
 
-/// A lasting emission: an outcome each time the transcript grows, until the
-/// Nexus closes the connection. A transcript not yet written is waited for.
-/// A path with no ancestor at all ends the connection, and the emission is Unanswered.
-pub fn follow(mut stream: UnixStream, follow: Follow_Data) -> io::Result<()> {
-    let watching = inotify::init(inotify::CreateFlags::CLOEXEC)?;
-    let mut appearing = Appearing::new(PathBuf::from(&follow.file_path.0));
-    let mut followed = false;
-    let mut read_from = follow.read_from.clone();
-    let mut events = [0u8; 4096];
-    loop {
-        if !followed {
-            followed = appearing.watch(&watching, inotify::WatchFlags::MODIFY)?.is_some();
+/// What Claude records of one of its running processes, in its sessions
+/// directory as `<pid>.json`: the process, the start the kernel gave it, and
+/// the session it runs now.
+struct Recorded {
+    process_id: i32,
+    process_start: String,
+    session_id: String,
+}
+
+impl Recorded {
+    /// The record a file holds, None when it cannot be read as one.
+    fn read(path: &Path) -> Option<Recorded> {
+        let value: Value = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+        let process_id = i32::try_from(value.get("pid")?.as_u64()?).ok()?;
+        let process_start = match value.get("procStart")? {
+            Value::String(start) => start.clone(),
+            Value::Number(start) => start.to_string(),
+            _ => return None,
+        };
+        Some(Recorded { process_id, process_start, session_id: text(&value, "sessionId").ok()? })
+    }
+}
+
+/// A process's start, in clock ticks since the boot, as /proc/<pid>/stat
+/// gives it: its twenty-second field. None when the process is gone or is a zombie.
+fn started(process_id: i32) -> Option<String> {
+    let stat = std::fs::read_to_string(format!("/proc/{process_id}/stat")).ok()?;
+    let (_, fields) = stat.rsplit_once(") ")?;
+    let mut fields = fields.split_whitespace();
+    if matches!(fields.next()?, "Z" | "X") {
+        return None;
+    }
+    fields.nth(18).map(str::to_owned)
+}
+
+/// Which live Claude processes hold one session, read from Claude's sessions
+/// directory: each process whose record names the session is held by a pidfd,
+/// once the start the record gives is the start the process with that pid has,
+/// so a pid the kernel has given again is not taken. A process is let go when
+/// its pidfd becomes readable, the process gone, or when its record names
+/// another session. The session has ended when no process holds it; that is
+/// told once, until a process holds it again.
+struct Witness {
+    session_id: String,
+    directory: Appearing,
+    watch: Option<i32>,
+    holders: BTreeMap<i32, OwnedFd>,
+    /// A record that cannot be read whose process is alive: what it names is not known, so no end is told.
+    unread: bool,
+    told: bool,
+}
+
+impl Witness {
+    const WATCHED: inotify::WatchFlags = inotify::WatchFlags::CLOSE_WRITE
+        .union(inotify::WatchFlags::MOVED_TO)
+        .union(inotify::WatchFlags::DELETE)
+        .union(inotify::WatchFlags::MOVED_FROM)
+        .union(inotify::WatchFlags::ONLYDIR);
+
+    /// The witness of the session a transcript is named for, under a sessions directory.
+    fn of(transcript: &Path, session_root: &SessionRoot) -> Option<Witness> {
+        let session_id = session(transcript)?.0;
+        Some(Witness { session_id, directory: Appearing::new(PathBuf::from(&session_root.0.0)), watch: None, holders: BTreeMap::new(), unread: false, told: false })
+    }
+
+    /// The directory is watched once it exists, and each record in it read.
+    fn look(&mut self, watching: &OwnedFd) -> io::Result<()> {
+        if self.watch.is_none() {
+            self.watch = self.directory.watch(watching, Witness::WATCHED)?;
         }
-        if followed {
-            let offset = match &read_from {
-                ReadFrom::Offset(offset) => *offset,
-                ReadFrom::FileEnd => Offset(std::fs::metadata(&appearing.path)?.len().try_into().unwrap_or(i64::MAX)),
-            };
-            let rows = rows_after(&follow.file_path.0, &offset, &follow.row_count)?;
-            read_from = ReadFrom::Offset(rows.offset);
-            let full = rows.row_vector.len() as i64 >= follow.row_count.0;
-            if !rows.row_vector.is_empty() {
-                rows.write_to(&mut stream)?;
-            }
-            if full {
-                continue;
-            }
-        }
-        if closed(&watching, &stream)? {
+        if self.watch.is_none() {
             return Ok(());
         }
-        rustix::io::read(&watching, &mut events)?;
+        let Ok(entries) = std::fs::read_dir(&self.directory.path) else {
+            self.unread = true;
+            return Ok(());
+        };
+        self.unread = false;
+        for path in entries.flatten().map(|entry| entry.path()).filter(|path| path.extension().is_some_and(|extension| extension == "json")) {
+            match Recorded::read(&path) {
+                Some(recorded) if recorded.session_id == self.session_id => self.take(recorded),
+                Some(recorded) => {
+                    self.holders.remove(&recorded.process_id);
+                }
+                None => {
+                    let alive = path.file_stem().and_then(|stem| stem.to_str()).and_then(|stem| stem.parse::<i32>().ok()).and_then(started).is_some();
+                    self.unread |= alive;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The pidfd is opened before the start is checked: a process with that
+    /// start, there after the pidfd is open, is the one the pidfd holds.
+    fn take(&mut self, recorded: Recorded) {
+        if self.holders.contains_key(&recorded.process_id) {
+            return;
+        }
+        let Some(pid) = rustix::process::Pid::from_raw(recorded.process_id) else { return };
+        let Ok(pidfd) = rustix::process::pidfd_open(pid, rustix::process::PidfdFlags::empty()) else { return };
+        if started(recorded.process_id).as_deref() == Some(recorded.process_start.as_str()) {
+            self.holders.insert(recorded.process_id, pidfd);
+        }
+    }
+
+    /// The session's end, once, when the directory is read whole and no process holds the session.
+    fn ending(&mut self) -> Option<EndReason> {
+        if !self.holders.is_empty() {
+            self.told = false;
+            return None;
+        }
+        if self.watch.is_none() || self.unread || self.told {
+            return None;
+        }
+        self.told = true;
+        Some(EndReason::Died)
+    }
+}
+
+/// What one follow reads into: the transcript's watch, and the witness of its session.
+struct Followed {
+    watching: OwnedFd,
+    transcript: Appearing,
+    transcript_watch: Option<i32>,
+    witness: Option<Witness>,
+}
+
+impl Followed {
+    /// Waits for a watch to report, a held process to end or the Nexus to
+    /// close the connection, true when it has closed. What the watches report
+    /// off the transcript is the sessions directory, or a directory waited
+    /// for: the witness looks again.
+    fn wait(&mut self, stream: &UnixStream, buffer: &mut [MaybeUninit<u8>]) -> io::Result<bool> {
+        let (reported, gone) = {
+            let mut waiting = vec![PollFd::new(&self.watching, PollFlags::IN), PollFd::new(stream, PollFlags::IN)];
+            let held: Vec<i32> = self.witness.iter().flat_map(|witness| witness.holders.keys().copied()).collect();
+            waiting.extend(self.witness.iter().flat_map(|witness| witness.holders.values()).map(|pidfd| PollFd::new(pidfd, PollFlags::IN)));
+            rustix::event::poll(&mut waiting, None)?;
+            if !waiting[1].revents().is_empty() {
+                return Ok(true);
+            }
+            let gone: Vec<i32> = held.into_iter().zip(&waiting[2..]).filter(|(_, waited)| !waited.revents().is_empty()).map(|(process_id, _)| process_id).collect();
+            (!waiting[0].revents().is_empty(), gone)
+        };
+        let mut looking = false;
+        if reported {
+            let mut reader = inotify::Reader::new(&self.watching, buffer);
+            loop {
+                let event = reader.next()?;
+                looking |= Some(event.wd()) != self.transcript_watch;
+                if reader.is_buffer_empty() {
+                    break;
+                }
+            }
+        }
+        if let Some(witness) = self.witness.as_mut() {
+            for process_id in gone {
+                witness.holders.remove(&process_id);
+            }
+            if looking {
+                witness.look(&self.watching)?;
+            }
+        }
+        Ok(false)
+    }
+}
+
+/// A lasting emission: an outcome each time the transcript grows, until the
+/// Nexus closes the connection. A transcript not yet written is waited for.
+/// A path with no ancestor at all ends the connection, and the emission is
+/// Unanswered. Where a sessions directory is given, the session's end is told
+/// with the rows read up to it: when no live process holds the session, at
+/// the start or once the last one is gone, after every row it wrote.
+pub fn follow(mut stream: UnixStream, follow: Follow_Data) -> io::Result<()> {
+    let path = PathBuf::from(&follow.file_path.0);
+    let witness = follow.session_root_option.as_ref().and_then(|session_root| Witness::of(&path, session_root));
+    let mut following = Followed { watching: inotify::init(inotify::CreateFlags::CLOEXEC)?, transcript: Appearing::new(path), transcript_watch: None, witness };
+    if let Some(witness) = following.witness.as_mut() {
+        witness.look(&following.watching)?;
+    }
+    let mut read_from = follow.read_from.clone();
+    let mut buffer = [MaybeUninit::<u8>::uninit(); 4096];
+    loop {
+        if following.transcript_watch.is_none() {
+            following.transcript_watch = following.transcript.watch(&following.watching, inotify::WatchFlags::MODIFY)?;
+        }
+        let offset = match (&read_from, following.transcript_watch) {
+            (ReadFrom::Offset(offset), _) => *offset,
+            (ReadFrom::FileEnd, Some(_)) => Offset(std::fs::metadata(&following.transcript.path)?.len().try_into().unwrap_or(i64::MAX)),
+            (ReadFrom::FileEnd, None) => Offset(0),
+        };
+        let mut rows = match following.transcript_watch {
+            Some(_) => rows_after(&follow.file_path.0, &offset, &follow.row_count)?,
+            None => Following_Data { row_vector: Vec::new(), offset, end_reason_option: None },
+        };
+        read_from = ReadFrom::Offset(rows.offset);
+        let full = rows.row_vector.len() as i64 >= follow.row_count.0;
+        if !full {
+            rows.end_reason_option = following.witness.as_mut().and_then(Witness::ending);
+        }
+        if !rows.row_vector.is_empty() || rows.end_reason_option.is_some() {
+            rows.write_to(&mut stream)?;
+        }
+        if full {
+            continue;
+        }
+        if following.wait(&stream, &mut buffer)? {
+            return Ok(());
+        }
     }
 }
 

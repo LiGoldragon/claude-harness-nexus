@@ -12,11 +12,26 @@ ethos-zero 'Generate.{ [ «ethos/signal.ethos» «ethos/meta.ethos» «ethos/emi
   is the library's input every Nexus has: its translator tells it that it has begun to
   listen, and it is answered at once by Acknowledged.
 - meta.ethos is the meta contract: Configure, answered by Configured. TranscriptRoot is the
-  directory Claude keeps its projects in, set as `Configure.TranscriptRoot.«/abs/path»`.
+  directory Claude keeps its projects in, set as `Configure.TranscriptRoot.«/abs/path»`;
+  SessionRoot the directory Claude keeps a record of each running process in, `<pid>.json`
+  naming its pid, its procStart and its sessionId, set as
+  `Configure.SessionRoot.«/home/li/.claude/sessions»`. A Watch is born with the SessionRoot
+  configured; one configured anew ends each living Watch Reconfigured, and it is born again
+  with it.
 - emission.ethos is the Emission root: Follow, Install and Discover, and what the translator
   observed. Discover is lasting, as Follow is: a Discovered for each session that appears
-  under the root.
+  under the root. A Follow given a SessionRoot witnesses the session its transcript is named
+  for: each process whose record names the session is held by a pidfd, taken only when the
+  record's procStart is the start /proc gives that pid, so a pid given again is not taken.
+  When no live process holds the session, at the start or once the last pidfd is readable,
+  the Following carries `Some.Died` after every row read up to it, once until a process
+  holds the session again; the follow goes on, since a resume writes on in the same file.
+  A record that cannot be read, of a process alive, holds the end back: what it names is
+  not known.
 - library.ethos holds what the roots share: Offset, ReadFrom and RowCount.
+- The Memory keeps an ended session's Observed, Ended, and its Watch; a second Ended is no
+  change, as a second TurnEnded is not, so a SessionEnd hook after the witness's end, or the
+  witness's after the hook's, is dropped. A resume's turn-start row brings it to Working.
 - memory.ethos has the Memory's five sections: its records, Watch, Observed and Keep; its
   changes, Observe and Recall; their answers, Observation and Recollection, by place. Keep is
   a record, so what returns for it is the process library's plain Answer.

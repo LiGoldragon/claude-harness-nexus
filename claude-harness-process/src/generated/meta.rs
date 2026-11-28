@@ -28,6 +28,7 @@ pub enum Set {
     HookClient(HookClient),
     RowCount(claude_harness::RowCount),
     TranscriptRoot(harness::FilePath),
+    SessionRoot(claude_harness::SessionRoot),
 }
 #[rustfmt::skip]
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]

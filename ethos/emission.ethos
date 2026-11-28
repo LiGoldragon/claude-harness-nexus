@@ -1,11 +1,11 @@
 Emission
-[ harness:[ SessionId FilePath Tokens Compaction ]
-  claude_harness:[ Offset ReadFrom RowCount ]
+[ harness:[ SessionId FilePath Tokens Compaction EndReason ]
+  claude_harness:[ Offset ReadFrom RowCount SessionRoot ]
   claude_harness:meta:[ Hooks HookClient ] ]
-[ Follow.{ FilePath ReadFrom RowCount }
+[ Follow.{ FilePath ReadFrom RowCount Option<SessionRoot> }
   Install.{ HookClient Hooks }
   Discover.{ FilePath } ]
-[ Following.{ Vector<Row> Offset }
+[ Following.{ Vector<Row> Offset Option<EndReason> }
   Installation.[ Installed.FilePath
                  Uninstalled.Integer ]
   Discovered.{ SessionId FilePath } ]

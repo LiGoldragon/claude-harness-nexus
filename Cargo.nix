@@ -281,7 +281,7 @@ rec {
           {
             name = "rustix";
             packageId = "rustix";
-            features = [ "net" "fs" "event" ];
+            features = [ "net" "fs" "event" "process" ];
           }
           {
             name = "signal-claude-prepare";
@@ -300,7 +300,7 @@ rec {
       };
       "claude-harness-process" = rec {
         crateName = "claude-harness-process";
-        version = "0.9.0";
+        version = "0.10.0";
         edition = "2024";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./claude-harness-process; };
         libName = "claude_harness_process";
@@ -410,7 +410,7 @@ rec {
           {
             name = "rustix";
             packageId = "rustix";
-            features = [ "net" "fs" "event" ];
+            features = [ "net" "fs" "event" "process" ];
           }
           {
             name = "serde_json";
@@ -876,7 +876,7 @@ rec {
           "default" = [ "std" "general" "errno" ];
           "rustc-dep-of-std" = [ "core" "no_std" ];
         };
-        resolvedDefaultFeatures = [ "auxvec" "elf" "errno" "general" "if_ether" "ioctl" "net" "netlink" "no_std" "xdp" ];
+        resolvedDefaultFeatures = [ "auxvec" "elf" "errno" "general" "if_ether" "ioctl" "net" "netlink" "no_std" "prctl" "xdp" ];
       };
       "memchr" = rec {
         crateName = "memchr";
@@ -1438,7 +1438,7 @@ rec {
           "thread" = [ "linux-raw-sys/prctl" ];
           "use-libc" = [ "libc_errno" "libc" ];
         };
-        resolvedDefaultFeatures = [ "alloc" "default" "event" "fs" "net" "std" ];
+        resolvedDefaultFeatures = [ "alloc" "default" "event" "fs" "net" "process" "std" ];
       };
       "rustversion" = rec {
         crateName = "rustversion";

@@ -42,6 +42,7 @@ pub enum Reporting {
 pub enum Watching {
     Forgotten,
     Unfollowed,
+    Reconfigured,
 }
 #[rustfmt::skip]
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
@@ -106,6 +107,7 @@ pub struct WatchProcess {
     pub file_path: harness::FilePath,
     pub read_from: claude_harness::ReadFrom,
     pub row_count: claude_harness::RowCount,
+    pub session_root_option: core::option::Option<claude_harness::SessionRoot>,
 }
 #[rustfmt::skip]
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
