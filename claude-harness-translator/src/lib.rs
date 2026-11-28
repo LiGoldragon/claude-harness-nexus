@@ -292,22 +292,42 @@ impl Appearing {
 /// directory as `<pid>.json`: the process, the start the kernel gave it, and
 /// the session it runs now.
 struct Recorded {
-    process_id: i32,
-    process_start: String,
-    session_id: String,
+    process_id: ProcessId,
+    process_start: ProcessStart,
+    session_id: SessionId,
+}
+
+/// A process's start, in clock ticks since the boot: what tells a process
+/// from a later one given the same pid.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct ProcessStart(u64);
+
+impl ProcessStart {
+    /// The start of the process with this pid now, as /proc/<pid>/stat gives
+    /// it: its twenty-second field. None when the process is gone or is a zombie.
+    fn of(process_id: ProcessId) -> Option<ProcessStart> {
+        let stat = std::fs::read_to_string(format!("/proc/{}/stat", process_id.0)).ok()?;
+        let (_, fields) = stat.rsplit_once(") ")?;
+        let mut fields = fields.split_whitespace();
+        if matches!(fields.next()?, "Z" | "X") {
+            return None;
+        }
+        fields.nth(18)?.parse().ok().map(ProcessStart)
+    }
 }
 
 impl Recorded {
-    /// The record a file holds, None when it cannot be read as one.
+    /// The record a file holds, None when it cannot be read as one. Claude
+    /// writes procStart as a string of digits; a number is read too.
     fn read(path: &Path) -> Option<Recorded> {
         let value: Value = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
-        let process_id = i32::try_from(value.get("pid")?.as_u64()?).ok()?;
-        let process_start = match value.get("procStart")? {
-            Value::String(start) => start.clone(),
-            Value::Number(start) => start.to_string(),
+        let process_id = ProcessId(i64::from(i32::try_from(value.get("pid")?.as_u64()?).ok()?));
+        let process_start = ProcessStart(match value.get("procStart")? {
+            Value::String(start) => start.parse().ok()?,
+            Value::Number(start) => start.as_u64()?,
             _ => return None,
-        };
-        Some(Recorded { process_id, process_start, session_id: text(&value, "sessionId").ok()? })
+        });
+        Some(Recorded { process_id, process_start, session_id: text(&value, "sessionId").map(SessionId).ok()? })
     }
 
     /// The record a file holds, read for a sessions directory: one that cannot
@@ -322,12 +342,12 @@ impl Recorded {
 
     /// The process it records is the one alive with that pid now.
     fn alive(&self) -> bool {
-        started(self.process_id).as_deref() == Some(self.process_start.as_str())
+        ProcessStart::of(self.process_id) == Some(self.process_start)
     }
 
     /// Each session a live Claude process holds, as a sessions directory
     /// records them; a record that cannot be read is passed over.
-    fn held(directory: &Path) -> BTreeSet<String> {
+    fn held(directory: &Path) -> BTreeSet<SessionId> {
         let Ok(entries) = std::fs::read_dir(directory) else { return BTreeSet::new() };
         entries
             .flatten()
@@ -338,18 +358,6 @@ impl Recorded {
             .map(|recorded| recorded.session_id)
             .collect()
     }
-}
-
-/// A process's start, in clock ticks since the boot, as /proc/<pid>/stat
-/// gives it: its twenty-second field. None when the process is gone or is a zombie.
-fn started(process_id: i32) -> Option<String> {
-    let stat = std::fs::read_to_string(format!("/proc/{process_id}/stat")).ok()?;
-    let (_, fields) = stat.rsplit_once(") ")?;
-    let mut fields = fields.split_whitespace();
-    if matches!(fields.next()?, "Z" | "X") {
-        return None;
-    }
-    fields.nth(18).map(str::to_owned)
 }
 
 /// Claude's sessions directory, read once for every follow it witnesses: each
@@ -453,16 +461,16 @@ impl Sessions {
 /// record names another session. The session has ended when no process holds
 /// it; that is told once, until a process holds it again.
 struct Witness {
-    session_id: String,
+    session_id: SessionId,
     root: u64,
-    holders: BTreeMap<i32, OwnedFd>,
+    holders: BTreeMap<ProcessId, OwnedFd>,
     /// The directory not read: what it records is not known, so no end is told.
     unread: bool,
     told: bool,
 }
 
 impl Witness {
-    fn new(session_id: String, root: u64) -> Witness {
+    fn new(session_id: SessionId, root: u64) -> Witness {
         Witness { session_id, root, holders: BTreeMap::new(), unread: false, told: false }
     }
 
@@ -484,9 +492,9 @@ impl Witness {
         if self.holders.contains_key(&recorded.process_id) {
             return;
         }
-        let Some(pid) = rustix::process::Pid::from_raw(recorded.process_id) else { return };
+        let Some(pid) = i32::try_from(recorded.process_id.0).ok().and_then(rustix::process::Pid::from_raw) else { return };
         let Ok(pidfd) = rustix::process::pidfd_open(pid, rustix::process::PidfdFlags::empty()) else { return };
-        if started(recorded.process_id).as_deref() == Some(recorded.process_start.as_str()) {
+        if recorded.alive() {
             self.holders.insert(recorded.process_id, pidfd);
         }
     }
@@ -550,7 +558,7 @@ impl Discovery {
         let mut discovery = Discovery { stream, session_root, root: Appearing::new(PathBuf::from(&discover.file_path.0)), root_watch: None, projects: BTreeMap::new(), reported: BTreeSet::new() };
         discovery.root_watch = discovery.root.watch(watches, Discovery::WATCHED, Watcher::Discovery(key))?;
         if discovery.root_watch.is_some() {
-            discovery.rooted(watches, key, false)?;
+            discovery.began(watches, key);
             discovery.held()?;
         }
         Ok(discovery)
@@ -565,7 +573,7 @@ impl Discovery {
         if self.root_watch.is_none() {
             self.root_watch = self.root.watch(watches, Discovery::WATCHED, Watcher::Discovery(key))?;
             if self.root_watch.is_some() {
-                self.rooted(watches, key, true)?;
+                self.root_appeared(watches, key)?;
             }
             return Ok(());
         }
@@ -588,7 +596,7 @@ impl Discovery {
         }
         for project in self.directories() {
             for session_id in &held {
-                let path = project.join(format!("{session_id}.jsonl"));
+                let path = project.join(format!("{}.jsonl", session_id.0));
                 if path.is_file() {
                     self.report(path)?;
                 }
@@ -637,15 +645,19 @@ impl Discovery {
         Discovered_Data { session_id, file_path: FilePath(path.to_string_lossy().into_owned()) }.write_to(&mut self.stream)
     }
 
-    /// The root has come to exist: each project directory in it is watched, and
-    /// what is in a root that appeared after the discovery began is reported.
-    fn rooted(&mut self, watches: &mut Watches, key: u64, appeared: bool) -> io::Result<()> {
+    /// The root as the discovery begins: each project directory in it is
+    /// watched, and what is in it already is not reported.
+    fn began(&mut self, watches: &mut Watches, key: u64) {
         for project in self.directories() {
-            if appeared {
-                self.appeared(watches, key, project)?;
-            } else {
-                self.watch(watches, key, project);
-            }
+            self.watch(watches, key, project);
+        }
+    }
+
+    /// A root that came to exist after the discovery began is new whole: each
+    /// project directory in it is watched, and what is in it is reported.
+    fn root_appeared(&mut self, watches: &mut Watches, key: u64) -> io::Result<()> {
+        for project in self.directories() {
+            self.appeared(watches, key, project)?;
         }
         Ok(())
     }
@@ -668,7 +680,7 @@ impl Discovery {
         let Some(root_watch) = self.root_watch else {
             self.root_watch = self.root.watch(watches, Discovery::WATCHED, Watcher::Discovery(key))?;
             if self.root_watch.is_some() {
-                self.rooted(watches, key, true)?;
+                self.root_appeared(watches, key)?;
             }
             return Ok(());
         };
@@ -714,7 +726,7 @@ enum Polled {
     Woken,
     Follow(u64),
     Discovery(u64),
-    Holder(u64, i32),
+    Holder(u64, ProcessId),
 }
 
 /// The one loop that follows every transcript and runs every discovery: one
@@ -866,7 +878,7 @@ impl Watched {
     fn followed(&mut self, key: u64, stream: UnixStream, follow: Follow_Data) -> io::Result<()> {
         let path = PathBuf::from(&follow.file_path.0);
         let mut witness = match (&follow.session_root_option, session(&path)) {
-            (Some(session_root), Some(session_id)) => Some(Witness::new(session_id.0, self.rooted(PathBuf::from(&session_root.0.0))?)),
+            (Some(session_root), Some(session_id)) => Some(Witness::new(session_id, self.rooted(PathBuf::from(&session_root.0.0))?)),
             _ => None,
         };
         if let Some(witness) = witness.as_mut()
@@ -1167,8 +1179,8 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
-    fn start_of(process_id: u32) -> String {
-        started(process_id as i32).expect("its start")
+    fn start_of(process_id: u32) -> u64 {
+        ProcessStart::of(ProcessId(process_id.into())).expect("its start").0
     }
 
     /// An overflowed queue rescans the discovery: a project directory not
@@ -1212,5 +1224,26 @@ mod tests {
         let _ = claude.kill();
         let _ = claude.wait();
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A record's pid, start and session are read into their types: the start
+    /// as Claude writes it, a string of digits, or as a number; a start that
+    /// is no number leaves the record unread.
+    #[test]
+    fn a_record_is_read_into_its_types() {
+        let directory = std::env::temp_dir().join(format!("claude-harness-record-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("the directory");
+        let session = "5e7d1c3a-2b4f-4a6e-8d9c-0f1e2a3b4c5d";
+        let read = |name: &str, start: &str| {
+            let path = directory.join(name);
+            std::fs::write(&path, format!(r#"{{"pid":4242,"sessionId":"{session}","procStart":{start}}}"#)).expect("the record");
+            Recorded::read(&path).map(|recorded| (recorded.process_id, recorded.process_start, recorded.session_id))
+        };
+        let expected = Some((ProcessId(4242), ProcessStart(987654), SessionId(session.into())));
+        assert_eq!(read("string.json", r#""987654""#), expected);
+        assert_eq!(read("number.json", "987654"), expected);
+        assert_eq!(read("word.json", r#""soon""#), None);
+        assert_eq!(ProcessStart::of(ProcessId(std::process::id().into())).map(|start| start.0 > 0), Some(true));
+        let _ = std::fs::remove_dir_all(&directory);
     }
 }
