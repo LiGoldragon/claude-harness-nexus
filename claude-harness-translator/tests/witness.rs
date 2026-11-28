@@ -9,7 +9,7 @@ use std::process::{Child, Command};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use claude_harness_process::{Follow_Data, Following_Data, Offset, ReadFrom, Row, RowCount, SessionRoot};
+use claude_harness_process::{Follow_Data, Following_Data, Offset, PendingAgentCount, ReadFrom, Row, RowCount, SessionRoot};
 use claude_harness_translator::follow;
 use harness::{EndReason, FilePath};
 use transport::Framed;
@@ -129,7 +129,7 @@ fn the_rows_a_process_wrote_come_before_its_end() {
             break end_reason;
         }
     };
-    assert_eq!((rows, ended), (vec![Row::TurnEnded], EndReason::Died));
+    assert_eq!((rows, ended), (vec![Row::TurnEnded(PendingAgentCount(0))], EndReason::Died));
     end(home, nexus, following);
 }
 
@@ -155,7 +155,7 @@ fn a_session_no_process_holds_is_ended_at_once_and_once() {
 
     home.append(r#"{"type":"system","subtype":"turn_duration","durationMs":1200}"#);
     home.record(other.id(), OTHER, &start_of(other.id()));
-    assert_eq!(next(&mut nexus), Some(Following_Data { row_vector: vec![Row::TurnEnded], offset: Offset(62), end_reason_option: None }));
+    assert_eq!(next(&mut nexus), Some(Following_Data { row_vector: vec![Row::TurnEnded(PendingAgentCount(0))], offset: Offset(62), end_reason_option: None }));
     assert_eq!(next(&mut nexus), None, "an end is told once");
     let _ = other.kill();
     let _ = other.wait();

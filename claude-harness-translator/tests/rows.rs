@@ -3,9 +3,9 @@
 //! 4a17 and 8hpf) and Claude 2.1.323's own transcripts record them, and how the
 //! translator reads them.
 
-use claude_harness_process::Row;
+use claude_harness_process::{PendingAgentCount, Row};
 use claude_harness_translator::Translatable;
-use harness::{Compaction, Tokens, Trigger};
+use harness::{Compaction, Flow, Identifiable, Observable, SessionId, Observed, State, Tokens, Transitionable, Trigger, WorkKind};
 
 /// 8hpf: Escape sent while a Bash call ran.
 const INTERRUPTED_FOR_TOOL_USE: &str = r#"{"parentUuid":"758cf75b-58c2-445c-a4f0-23b55f04d19c","isSidechain":false,"promptId":"419847c6-2c73-4ab8-875b-b42247e1e0bf","type":"user","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user for tool use]"}]},"uuid":"6cbd3db6-2121-4bee-aebf-d4e257b0ec91","timestamp":"2026-11-21T04:49:59.189Z","interruptedMessageId":"msg_011ChFUEHkgXmDm22XdX8ULw","session_id":"9c6908c4-5788-49e0-861c-eb98d9406fe3","userType":"external","entrypoint":"cli","cwd":"/tmp/claude-1001/-home-li-primary/4682ac0e-82eb-520f-bbaf-4365e9087c17/scratchpad/8hpf.Ru0d","sessionId":"9c6908c4-5788-49e0-861c-eb98d9406fe3","version":"2.1.325","gitBranch":"HEAD"}"#;
@@ -56,7 +56,35 @@ const TURN_DURATION: &str = r#"{"parentUuid":"c3b00c5c-9d92-4a79-a4dd-9254f20ce6
 
 #[test]
 fn a_turn_duration_row_ends_the_turn() {
-    assert_eq!(Row::translate(TURN_DURATION), Ok(Row::TurnEnded));
+    assert_eq!(Row::translate(TURN_DURATION), Ok(Row::TurnEnded(PendingAgentCount(0))));
+}
+
+/// The system row Claude 2.1.331 writes as a turn ends with two background agents still running.
+const TURN_DURATION_PENDING: &str = r#"{"parentUuid":"36a36716-36e9-476d-9fa6-6e2e856ba2ce","isSidechain":false,"type":"system","subtype":"turn_duration","durationMs":49833,"messageCount":512,"pendingBackgroundAgentCount":2,"timestamp":"2026-11-28T10:37:26.500Z","uuid":"8931cff3-c9e5-4d15-8133-6160e7c7af31","isMeta":false,"userType":"external","entrypoint":"cli","cwd":"/home/li/primary","sessionId":"4cdf3d8e-5230-5dd2-9139-695f3ce23349","version":"2.1.331","gitBranch":"main","dataFlowOn":true}"#;
+
+#[test]
+fn a_turn_duration_row_carries_its_pending_background_agents() {
+    assert_eq!(Row::translate(TURN_DURATION_PENDING), Ok(Row::TurnEnded(PendingAgentCount(2))));
+}
+
+#[test]
+fn a_turn_left_with_agents_running_waits_and_the_next_turn_with_none_rests() {
+    let mut flow = Observed { flow_id: SessionId("4cdf3d8e-5230-5dd2-9139-695f3ce23349".into()).identify(), state: State::Dry, background_work_vector: vec![], tokens: Tokens(0) };
+    let turn = |flow: &mut Observed, row: &str| {
+        flow.after(harness::Event::PromptSubmitted);
+        for event in Row::translate(row).expect("a row").events() {
+            flow.after(event);
+        }
+    };
+    turn(&mut flow, TURN_DURATION_PENDING);
+    assert_eq!(flow.state, State::Flowing(Flow::Waiting));
+    assert_eq!(flow.background_work_vector.len(), 2);
+    assert!(flow.background_work_vector.iter().all(|work| work.work_kind == WorkKind::Subagent));
+    assert_eq!(flow.background_work_vector[0].work_id.0, "pending-agent-1");
+    let none = TURN_DURATION_PENDING.replace(r#""pendingBackgroundAgentCount":2"#, r#""pendingBackgroundAgentCount":0"#);
+    turn(&mut flow, &none);
+    assert_eq!(flow.state, State::Flowing(Flow::Rested));
+    assert!(flow.background_work_vector.is_empty());
 }
 
 #[test]

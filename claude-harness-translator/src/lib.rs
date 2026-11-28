@@ -122,7 +122,8 @@ fn compaction(value: &Value) -> Option<Compaction> {
 impl Translatable for Row {
     /// Of the main thread: an assistant row tells the context's size, the user
     /// row that carries turnPosition starts a turn, the turn_duration system
-    /// row Claude writes as every turn ends ends it, the user row that reads
+    /// row Claude writes as every turn ends ends it, with the count of background
+    /// agents it leaves running (none where the row has no count), the user row that reads
     /// as an interruption is Interrupted, and the compact_boundary row is
     /// Compacted. Every other row is Other, the stop_hook_summary row among them.
     fn translate(line: &str) -> Result<Row, Untranslated> {
@@ -133,7 +134,9 @@ impl Translatable for Row {
         Ok(match (value.get("type").and_then(Value::as_str), main_thread, usage) {
             (Some("user"), true, _) if interrupts(&value) => Row::Interrupted,
             (Some("user"), true, _) if value.get("turnPosition").is_some_and(|position| !position.is_null()) => Row::TurnStarted,
-            (Some("system"), true, _) if subtype == Some("turn_duration") => Row::TurnEnded,
+            (Some("system"), true, _) if subtype == Some("turn_duration") => {
+                Row::TurnEnded(PendingAgentCount(value.get("pendingBackgroundAgentCount").and_then(Value::as_i64).unwrap_or(0)))
+            }
             (Some("system"), true, _) if subtype == Some("compact_boundary") => compaction(&value).map_or(Row::Other, Row::Compacted),
             (Some("assistant"), true, Some(usage)) => {
                 let tokens = ["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"]

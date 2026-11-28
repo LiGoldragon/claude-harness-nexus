@@ -36,7 +36,7 @@ fn a_watch_follows_with_its_sessions_directory_and_observes_the_end_after_the_ro
     let mut world = World::default();
     manager.bear(Living { identity: identity.clone(), process: watch() }, &mut world);
 
-    let ended = Taken::Following(Ok(Following_Data { row_vector: vec![Row::TurnEnded], offset: Offset(62), end_reason_option: Some(EndReason::Died) }));
+    let ended = Taken::Following(Ok(Following_Data { row_vector: vec![Row::TurnEnded(PendingAgentCount(0))], offset: Offset(62), end_reason_option: Some(EndReason::Died) }));
     manager.hand(Given { identity: identity.clone(), taken: ended.clone() }, &mut world);
 
     let gave = |gift| Trace::Gave(Gave { identity: identity.clone(), gift });
@@ -51,7 +51,7 @@ fn a_watch_follows_with_its_sessions_directory_and_observes_the_end_after_the_ro
                 session_root_option: Some(session_root()),
             })),
             Trace::Took(Given { identity: identity.clone(), taken: ended }),
-            gave(Gift::Observe(Observe { flow_id: FlowId("5e7d1c".into()), event_vector: vec![Event::TurnEnded, Event::Ended(EndReason::Died)], offset_option: Some(Offset(62)) })),
+            gave(Gift::Observe(Observe { flow_id: FlowId("5e7d1c".into()), event_vector: vec![Event::InFlight(vec![]), Event::TurnEnded, Event::Ended(EndReason::Died)], offset_option: Some(Offset(62)) })),
         ]
     );
 }

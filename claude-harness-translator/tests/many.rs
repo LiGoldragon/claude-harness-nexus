@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::process::{Child, Command};
 use std::time::Duration;
 
-use claude_harness_process::{Follow_Data, Following_Data, Offset, ReadFrom, Row, RowCount, SessionRoot};
+use claude_harness_process::{Follow_Data, Following_Data, Offset, PendingAgentCount, ReadFrom, Row, RowCount, SessionRoot};
 use claude_harness_translator::Watching;
 use harness::{EndReason, FilePath};
 use transport::Framed;
@@ -94,7 +94,7 @@ fn two_hundred_sessions_are_followed_in_one_loop_from_working_to_rested_to_their
     }
     for session in &mut followed {
         let rested = next(&mut session.nexus);
-        assert_eq!((rested.row_vector, rested.end_reason_option), (vec![Row::TurnEnded], None), "Rested");
+        assert_eq!((rested.row_vector, rested.end_reason_option), (vec![Row::TurnEnded(PendingAgentCount(0))], None), "Rested");
     }
     for session in &mut followed {
         session.process.kill().expect("the kill");

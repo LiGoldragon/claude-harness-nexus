@@ -9,9 +9,10 @@ Emission
   Installation.[ Installed.FilePath
                  Uninstalled.Integer ]
   Discovered.{ SessionId FilePath } ]
-[ Row.[ Assistant.Tokens
+[ PendingAgentCount.Integer
+  Row.[ Assistant.Tokens
         TurnStarted
-        TurnEnded
+        TurnEnded.PendingAgentCount
         Interrupted
         Compacted.Compaction
         Other ] ]

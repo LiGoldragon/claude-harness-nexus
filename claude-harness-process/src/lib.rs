@@ -32,7 +32,7 @@ pub mod emission;
 pub mod memory;
 pub mod processes;
 
-pub use emission::{Discover_Data, Discovered_Data, Emission, Follow_Data, Following_Data, Install_Data, Installation_Data, Row};
+pub use emission::{Discover_Data, Discovered_Data, Emission, Follow_Data, Following_Data, Install_Data, Installation_Data, PendingAgentCount, Row};
 pub use library::*;
 pub use memory::*;
 pub use meta::{HookClient, HookName, Hooks, Set};
@@ -58,11 +58,12 @@ pub struct MetaCall {
     pub meta_input: meta::Input,
 }
 
+use alloc::format;
 use alloc::vec;
 use alloc::vec::Vec;
 
 use flow::FlowId;
-use harness::{Event, Identifiable, Observable};
+use harness::{BackgroundWork, Description, Event, Identifiable, Observable, WorkId, WorkKind};
 use process::{Answer, Caller, Giving, Processable, Unremembered};
 
 impl Identifiable for Hook {
@@ -104,11 +105,26 @@ impl Observable for Row {
         match self {
             Row::Assistant(tokens) => vec![Event::ContextSize(*tokens)],
             Row::TurnStarted => vec![Event::PromptSubmitted],
-            Row::TurnEnded => vec![Event::TurnEnded],
+            // The agents still running as the turn ended, as one set, so the turn ends Waiting while any is.
+            Row::TurnEnded(pending_agent_count) => vec![Event::InFlight(pending_agent_count.works()), Event::TurnEnded],
             Row::Interrupted => vec![Event::Interrupted],
             Row::Compacted(compaction) => vec![Event::Compacted(compaction.clone())],
             Row::Other => vec![],
         }
+    }
+}
+
+impl PendingAgentCount {
+    /// The transcript counts the background agents still running as a turn
+    /// ends and names none: each is a Subagent, its id saying it was counted.
+    pub fn works(&self) -> Vec<BackgroundWork> {
+        (1..=self.0.max(0))
+            .map(|position| BackgroundWork {
+                work_id: WorkId(format!("pending-agent-{position}")),
+                work_kind: WorkKind::Subagent,
+                description: Description("a background agent the transcript counts as pending, its name not known".into()),
+            })
+            .collect()
     }
 }
 

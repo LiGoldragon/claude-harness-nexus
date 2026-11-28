@@ -28,6 +28,9 @@ ethos-zero 'Generate.{ [ «ethos/signal.ethos» «ethos/meta.ethos» «ethos/emi
   holds the session again; the follow goes on, since a resume writes on in the same file.
   A record that cannot be read, of a process alive, holds the end back: what it names is
   not known.
+- A Row's TurnEnded carries the PendingAgentCount of its turn_duration row,
+  `pendingBackgroundAgentCount` (none where the row has none): its events are InFlight, of one
+  counted Subagent work for each, and TurnEnded, so a turn left with agents running ends Waiting.
 - library.ethos holds what the roots share: Offset, ReadFrom and RowCount.
 - The Memory keeps an ended session's Observed, Ended, and its Watch; a second Ended is no
   change, as a second TurnEnded is not, so a SessionEnd hook after the witness's end, or the
