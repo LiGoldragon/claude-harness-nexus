@@ -29,8 +29,9 @@ ethos-zero 'Generate.{ [ «ethos/signal.ethos» «ethos/meta.ethos» «ethos/emi
   When no live process holds the session, at the start or once the last pidfd is readable,
   the Following carries `Some.Died` after every row read up to it, once until a process
   holds the session again; the follow goes on, since a resume writes on in the same file.
-  A record that cannot be read, of a process alive, holds the end back: what it names is
-  not known.
+  A record that cannot be read is reported and skipped, so it never holds back another
+  session's end; a sessions directory not read, or deleted, holds every end back until it is
+  read again.
 - A Row's TurnEnded carries the PendingAgentCount of its turn_duration row,
   `pendingBackgroundAgentCount` (none where the row has none): its events are InFlight, of one
   counted Subagent work for each, and TurnEnded, so a turn left with agents running ends Waiting.

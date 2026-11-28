@@ -220,3 +220,21 @@ fn a_sessions_directory_deleted_and_made_again_is_read_again() {
     assert_eq!(next(&mut nexus).map(|following| following.end_reason_option), Some(Some(EndReason::Died)));
     end(home, nexus, following);
 }
+
+#[test]
+fn an_unreadable_record_is_skipped_and_holds_no_end_back() {
+    let home = Home::new("unreadable");
+    let mut process = claude();
+    let mut other = claude();
+    home.record(process.id(), SESSION, &start_of(process.id()));
+    std::fs::write(home.sessions().join(format!("{}.json", other.id())), "{").expect("an unreadable record of a live process");
+    let (mut nexus, following) = home.follow();
+    assert_eq!(next(&mut nexus), None, "a held session is not ended");
+
+    process.kill().expect("the kill");
+    process.wait().expect("the reaping");
+    assert_eq!(next(&mut nexus).map(|following| following.end_reason_option), Some(Some(EndReason::Died)));
+    let _ = other.kill();
+    let _ = other.wait();
+    end(home, nexus, following);
+}

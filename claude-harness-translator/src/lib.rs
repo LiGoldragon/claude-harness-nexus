@@ -310,6 +310,16 @@ impl Recorded {
         Some(Recorded { process_id, process_start, session_id: text(&value, "sessionId").ok()? })
     }
 
+    /// The record a file holds, read for a sessions directory: one that cannot
+    /// be read as a record is reported and skipped, and the rest are regarded.
+    fn regarded(path: &Path) -> Option<Recorded> {
+        let recorded = Recorded::read(path);
+        if recorded.is_none() {
+            eprintln!("UnreadableSessionRecord: {} is not read as a pid, a procStart and a sessionId; it is skipped", path.display());
+        }
+        recorded
+    }
+
     /// The process it records is the one alive with that pid now.
     fn alive(&self) -> bool {
         started(self.process_id).as_deref() == Some(self.process_start.as_str())
@@ -347,8 +357,8 @@ fn started(process_id: i32) -> Option<String> {
 struct Sessions {
     directory: Appearing,
     watch: Option<i32>,
-    /// Each record by its file, None for one that cannot be read as a record.
-    records: BTreeMap<PathBuf, Option<Recorded>>,
+    /// Each record by its file; one that cannot be read as a record is not held.
+    records: BTreeMap<PathBuf, Recorded>,
     /// The directory itself was read.
     readable: bool,
     followers: BTreeSet<u64>,
@@ -382,8 +392,9 @@ impl Sessions {
         };
         self.readable = true;
         for path in entries.flatten().map(|entry| entry.path()).filter(|path| Sessions::recording(path)) {
-            let recorded = Recorded::read(&path);
-            self.records.insert(path, recorded);
+            if let Some(recorded) = Recorded::regarded(&path) {
+                self.records.insert(path, recorded);
+            }
         }
         Ok(())
     }
@@ -416,8 +427,10 @@ impl Sessions {
         if seen.intersects(inotify::ReadFlags::DELETE | inotify::ReadFlags::MOVED_FROM) {
             self.records.remove(&path);
         } else if seen.intersects(inotify::ReadFlags::CLOSE_WRITE | inotify::ReadFlags::MOVED_TO) {
-            let recorded = Recorded::read(&path);
-            self.records.insert(path, recorded);
+            match Recorded::regarded(&path) {
+                Some(recorded) => self.records.insert(path, recorded),
+                None => self.records.remove(&path),
+            };
         } else {
             return Ok(false);
         }
@@ -443,7 +456,7 @@ struct Witness {
     session_id: String,
     root: u64,
     holders: BTreeMap<i32, OwnedFd>,
-    /// A record that cannot be read whose process is alive, or a directory not read: what it names is not known, so no end is told.
+    /// The directory not read: what it records is not known, so no end is told.
     unread: bool,
     told: bool,
 }
@@ -455,9 +468,8 @@ impl Witness {
 
     /// The directory's records, as they stand, taken in.
     fn regard(&mut self, sessions: &Sessions) {
-        let alive = |path: &PathBuf| path.file_stem().and_then(|stem| stem.to_str()).and_then(|stem| stem.parse::<i32>().ok()).and_then(started).is_some();
-        self.unread = !sessions.readable || sessions.records.iter().any(|(path, recorded)| recorded.is_none() && alive(path));
-        for recorded in sessions.records.values().flatten() {
+        self.unread = !sessions.readable;
+        for recorded in sessions.records.values() {
             if recorded.session_id == self.session_id {
                 self.take(recorded);
             } else {
