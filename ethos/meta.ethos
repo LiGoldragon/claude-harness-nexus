@@ -6,9 +6,11 @@ Signal
 [ HookName.String
   Hooks.Vector<HookName>
   HookClient.String
+  EndedRetention.Integer
   Set.[ Hooks
         RemoveHook.HookName
         HookClient
         RowCount
         TranscriptRoot.FilePath
-        SessionRoot ] ]
+        SessionRoot
+        EndedRetention ] ]

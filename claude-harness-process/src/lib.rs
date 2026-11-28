@@ -35,7 +35,7 @@ pub mod processes;
 pub use emission::{Discover_Data, Discovered_Data, Emission, Follow_Data, Following_Data, Install_Data, Installation_Data, PendingAgentCount, Row};
 pub use library::*;
 pub use memory::*;
-pub use meta::{HookClient, HookName, Hooks, Set};
+pub use meta::{EndedRetention, HookClient, HookName, Hooks, Set};
 pub use processes::*;
 pub use signal::*;
 
@@ -64,7 +64,7 @@ use alloc::vec::Vec;
 
 use flow::FlowId;
 use harness::{BackgroundWork, Description, Event, Identifiable, Observable, WorkId, WorkKind};
-use process::{Answer, Caller, Giving, Processable, Unremembered};
+use process::{Answer, Caller, Giving, Moment, Processable, Unremembered};
 
 impl Identifiable for Hook {
     fn identify(&self) -> FlowId {
@@ -111,6 +111,16 @@ impl Observable for Row {
             Row::Compacted(compaction) => vec![Event::Compacted(compaction.clone())],
             Row::Other => vec![],
         }
+    }
+}
+
+/// A minute, in the nanoseconds a Moment counts.
+pub const NANOSECONDS_IN_A_MINUTE: i64 = 60_000_000_000;
+
+impl EndedRetention {
+    /// The moment a session ended at `since` is forgotten: its minutes after it.
+    pub fn after(&self, since: Moment) -> Moment {
+        Moment(since.0.saturating_add(self.0.max(0).saturating_mul(NANOSECONDS_IN_A_MINUTE)))
     }
 }
 

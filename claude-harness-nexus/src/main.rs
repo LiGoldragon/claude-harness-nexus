@@ -27,21 +27,62 @@ enum Arrived {
     Listening,
     Preparing(Identity, Caller),
     Reconfigured,
+    /// The moment a timer was set for: the earliest an ended session is due to be forgotten.
+    Due(Moment),
 }
 
 type Queue = Sender<Arrived>;
 
+/// An ended session, and the moment its retention counts from: when it was
+/// last told Ended, or its transcript last grew while it stayed Ended.
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq)]
+struct EndedSince {
+    flow_id: FlowId,
+    since: Moment,
+}
+
 /// What the memory holds, archived whole as its file: each session observed,
-/// each Watch, and the configuration its Keeps have come to.
+/// each Watch, each ended session's moment, and the configuration its Keeps
+/// have come to.
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 struct Records {
     observed_vector: Vec<Observed>,
     watch_vector: Vec<Watch>,
+    ended_since_vector: Vec<EndedSince>,
     hooks: Hooks,
     hook_client_option: Option<HookClient>,
     row_count_option: Option<RowCount>,
     transcript_root_option: Option<FilePath>,
     session_root_option: Option<SessionRoot>,
+    ended_retention_option: Option<EndedRetention>,
+}
+
+impl Records {
+    fn empty() -> Records {
+        Records {
+            observed_vector: Vec::new(),
+            watch_vector: Vec::new(),
+            ended_since_vector: Vec::new(),
+            hooks: Hooks(Vec::new()),
+            hook_client_option: None,
+            row_count_option: None,
+            transcript_root_option: None,
+            session_root_option: None,
+            ended_retention_option: None,
+        }
+    }
+}
+
+/// The retention as the Nexus starts with it, reported on its stderr.
+struct Retained(Option<EndedRetention>);
+
+impl std::fmt::Display for Retained {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.0 {
+            Some(retention) => write!(formatter, "EndedRetention: an ended session is forgotten {} minutes after its end, its transcript not grown", retention.0),
+            None => write!(formatter, "EndedRetention: none configured; every ended session is kept"),
+        }
+    }
 }
 
 /// The memory process: one change at a time, each kept before it is answered.
@@ -54,10 +95,9 @@ impl MemoryProcess {
     /// A memory file that is there and cannot be read is not overwritten: the program does not start.
     fn open(place: &Place) -> std::io::Result<MemoryProcess> {
         let file = place.path(Placed::Memory(VERSION));
-        let empty = || Records { observed_vector: Vec::new(), watch_vector: Vec::new(), hooks: Hooks(Vec::new()), hook_client_option: None, row_count_option: None, transcript_root_option: None, session_root_option: None };
         let records = match File::open(&file) {
-            Ok(opened) => Records::read_from(&mut BufReader::new(opened))?.unwrap_or_else(empty),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => empty(),
+            Ok(opened) => Records::read_from(&mut BufReader::new(opened))?.unwrap_or_else(Records::empty),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Records::empty(),
             Err(error) => return Err(error),
         };
         Ok(MemoryProcess { records, file })
@@ -127,18 +167,52 @@ impl MemoryProcess {
             Set::RowCount(row_count) => self.records.row_count_option = Some(row_count),
             Set::TranscriptRoot(file_path) => self.records.transcript_root_option = Some(file_path),
             Set::SessionRoot(session_root) => self.records.session_root_option = Some(session_root),
+            Set::EndedRetention(ended_retention) => self.records.ended_retention_option = Some(ended_retention),
         }
         self.keep()
+    }
+
+    /// The earliest moment an ended session is due to be forgotten, where a retention is configured.
+    fn due(&self) -> Option<Moment> {
+        let retention = self.records.ended_retention_option?;
+        self.records.ended_since_vector.iter().map(|ended| retention.after(ended.since)).min_by_key(|due| due.0)
+    }
+
+    /// Each ended session whose retention has passed by `now` is forgotten:
+    /// its Observed, its Watch and its moment leave the memory. The flows
+    /// forgotten are returned; with no retention configured, none is.
+    fn retire(&mut self, now: &Moment) -> Vec<FlowId> {
+        let Some(retention) = self.records.ended_retention_option else { return Vec::new() };
+        let (forgotten, kept): (Vec<EndedSince>, Vec<EndedSince>) = std::mem::take(&mut self.records.ended_since_vector).into_iter().partition(|ended| retention.after(ended.since).0 <= now.0);
+        self.records.ended_since_vector = kept;
+        let forgotten: Vec<FlowId> = forgotten.into_iter().map(|ended| ended.flow_id).collect();
+        if forgotten.is_empty() {
+            return forgotten;
+        }
+        self.records.observed_vector.retain(|observed| !forgotten.contains(&observed.flow_id));
+        self.records.watch_vector.retain(|watch| !forgotten.contains(&watch.flow_id));
+        if self.keep() == Answer::Failed {
+            eprintln!("Unremembered: the memory forgot {} ended sessions and could not keep it; the next change keeps it", forgotten.len());
+        }
+        forgotten
     }
 
     /// Applies each event and keeps the offset. What a Watch observes applies
     /// only while its Watch is kept. A session that has ended keeps its
     /// Observed, Ended, and its Watch, since a resume writes on in the same
     /// transcript; a second end is no change, as a second TurnEnded is not.
-    fn observe(&mut self, observe: Observe) -> Result<Observation, Unremembered> {
+    /// An ended session's retention counts from `now` when it ends, and again
+    /// each time its transcript grows while it stays Ended; it is no longer
+    /// counted once the session leaves Ended.
+    fn observe(&mut self, observe: Observe, now: Moment) -> Result<Observation, Unremembered> {
         if observe.offset_option.is_some() && !self.holds_watch(&observe.flow_id) {
             return Ok(Observation(Vec::new()));
         }
+        let read = self.records.watch_vector.iter().find(|watch| watch.flow_id == observe.flow_id).and_then(|watch| match &watch.read_from {
+            ReadFrom::Offset(offset) => Some(*offset),
+            ReadFrom::FileEnd => None,
+        });
+        let grown = matches!((observe.offset_option, read), (Some(offset), Some(read)) if offset > read);
         let position = match self.records.observed_vector.iter().position(|observed| observed.flow_id == observe.flow_id) {
             Some(position) => position,
             None => {
@@ -157,6 +231,15 @@ impl MemoryProcess {
                 (!witnessed).then(|| Changed { flow_id: observe.flow_id.clone(), event, state: observed.state.clone() })
             })
             .collect();
+        let ended = observed.state == State::Ended;
+        match (ended, self.records.ended_since_vector.iter().position(|ended| ended.flow_id == observe.flow_id)) {
+            (true, None) => self.records.ended_since_vector.push(EndedSince { flow_id: observe.flow_id.clone(), since: now }),
+            (true, Some(position)) if grown => self.records.ended_since_vector[position].since = now,
+            (false, Some(position)) => {
+                self.records.ended_since_vector.remove(position);
+            }
+            _ => {}
+        }
         if let Some(offset) = observe.offset_option {
             for watch in self.records.watch_vector.iter_mut().filter(|watch| watch.flow_id == observe.flow_id) {
                 watch.read_from = ReadFrom::Offset(offset);
@@ -405,6 +488,8 @@ struct World {
     watching: BTreeMap<FlowId, Identity>,
     /// The one discovery that has a living process, or one on its way to birth, and its root.
     discovering: Option<(DiscoverProcess, Identity)>,
+    /// The moment the one timer set is due at: the earliest an ended session is forgotten.
+    timer: Option<Moment>,
 }
 
 impl World {
@@ -468,6 +553,40 @@ impl World {
         }
     }
 
+    /// Each ended session whose retention has passed is forgotten, its Watch's
+    /// process ended, and the timer set for the next.
+    fn retire(&mut self) {
+        self.memory.retire(&now());
+        self.forget();
+        self.schedule();
+    }
+
+    /// One timer, for the earliest moment an ended session is due to be
+    /// forgotten: set when none is, or when one earlier is due than it is set
+    /// for. A timer is one thread that sleeps until its moment and then puts
+    /// it on the queue; nothing is polled.
+    fn schedule(&mut self) {
+        let Some(due) = self.memory.due() else { return };
+        if self.timer.as_ref().is_some_and(|timer| timer.0 <= due.0) {
+            return;
+        }
+        self.timer = Some(due);
+        let queue = self.queue.clone();
+        let waited = std::time::Duration::from_nanos(u64::try_from(due.0.saturating_sub(now().0)).unwrap_or(0));
+        thread::spawn(move || {
+            thread::sleep(waited);
+            let _ = queue.send(Arrived::Due(due));
+        });
+    }
+
+    /// A timer come due: it is no longer set, if it is the one set, and what is due is forgotten.
+    fn due(&mut self, due: Moment) {
+        if self.timer.as_ref() == Some(&due) {
+            self.timer = None;
+        }
+        self.retire();
+    }
+
     /// A sessions directory configured anew ends each living Watch, and the
     /// queue, past their ends, bears them again with it.
     fn reconfigure(&mut self) {
@@ -511,13 +630,15 @@ impl World {
                     self.reconfigure();
                 }
                 self.give_back(identity, Taken::Answer(answer));
+                self.retire();
                 self.bear_watches();
                 self.bear_discovery();
             }
             Gift::Observe(observe) => {
-                let observation = self.memory.observe(observe);
+                let observation = self.memory.observe(observe, now());
                 self.give_back(identity, Taken::Observation(observation));
                 self.forget();
+                self.schedule();
             }
             Gift::Follow(follow) => self.emission.last(identity, Emission::Follow(follow), self.queue.clone(), Taken::Following),
             Gift::Discover(discover) => self.emission.last(identity, Emission::Discover(discover), self.queue.clone(), Taken::Discovered),
@@ -575,8 +696,10 @@ fn main() -> ExitCode {
         }
     };
     let emission = EmissionSocket { place: place.clone(), lasting: BTreeMap::new() };
-    let mut world = World { signal, memory, emission, archive, queue, roots, watching: BTreeMap::new(), discovering: None };
+    eprintln!("{}", Retained(memory.records.ended_retention_option));
+    let mut world = World { signal, memory, emission, archive, queue, roots, watching: BTreeMap::new(), discovering: None, timer: None };
     world.trace(Trace::Started(now()));
+    world.retire();
     world.bear_watches();
     world.bear_discovery();
     let mut manager = ProcessManager::default();
@@ -588,6 +711,7 @@ fn main() -> ExitCode {
                 world.bear_discovery();
             }
             Arrived::Reconfigured => world.bear_watches(),
+            Arrived::Due(due) => world.due(due),
             Arrived::Preparing(identity, caller) => {
                 let process = world.memory.prepare_process(caller);
                 manager.arrive(Arrival::Born(Living { identity, process }), &mut world)
@@ -613,7 +737,7 @@ mod tests {
     fn memory(name: &str) -> MemoryProcess {
         let directory = std::env::temp_dir().join(format!("claude-harness-memory-{name}-{}", std::process::id()));
         std::fs::create_dir_all(&directory).expect("the directory");
-        let records = Records { observed_vector: Vec::new(), watch_vector: Vec::new(), hooks: Hooks(Vec::new()), hook_client_option: None, row_count_option: Some(RowCount(64)), transcript_root_option: None, session_root_option: None };
+        let records = Records { row_count_option: Some(RowCount(64)), ..Records::empty() };
         let mut memory = MemoryProcess { records, file: directory.join("memory.signal") };
         let watch = Watch { flow_id: FlowId(FLOW.into()), file_path: FilePath(format!("/t/{FLOW}.jsonl")), read_from: ReadFrom::Offset(Offset(0)) };
         assert_eq!(memory.watch(watch), Answer::Succeeded);
@@ -621,7 +745,21 @@ mod tests {
     }
 
     fn observe(memory: &mut MemoryProcess, events: Vec<Event>, offset: i64) -> Vec<Changed> {
-        memory.observe(Observe { flow_id: FlowId(FLOW.into()), event_vector: events, offset_option: Some(Offset(offset)) }).expect("an observation").0
+        observe_at(memory, events, offset, 0)
+    }
+
+    /// An Observe of the Watch's follow, at a moment some minutes after the first.
+    fn observe_at(memory: &mut MemoryProcess, events: Vec<Event>, offset: i64, minutes: i64) -> Vec<Changed> {
+        memory.observe(Observe { flow_id: FlowId(FLOW.into()), event_vector: events, offset_option: Some(Offset(offset)) }, at(minutes)).expect("an observation").0
+    }
+
+    fn at(minutes: i64) -> Moment {
+        Moment(minutes * claude_harness_process::NANOSECONDS_IN_A_MINUTE)
+    }
+
+    /// The session as a Subscribed carries it: the memory's Observed, as Recall gives it.
+    fn subscribed(memory: &MemoryProcess) -> Option<&Observed> {
+        memory.records.observed_vector.iter().find(|observed| observed.flow_id == FlowId(FLOW.into()))
     }
 
     fn changed(event: Event, state: State) -> Changed {
@@ -639,7 +777,7 @@ mod tests {
         assert!(memory.holds_watch(&FlowId(FLOW.into())));
         assert_eq!(memory.records.watch_vector[0].read_from, ReadFrom::Offset(Offset(120)));
         assert_eq!(memory.records.observed_vector[0].state, State::Ended);
-        let hooked = memory.observe(Observe { flow_id: FlowId(FLOW.into()), event_vector: vec![Event::Ended(EndReason::Exited)], offset_option: None }).expect("an observation").0;
+        let hooked = memory.observe(Observe { flow_id: FlowId(FLOW.into()), event_vector: vec![Event::Ended(EndReason::Exited)], offset_option: None }, at(0)).expect("an observation").0;
         assert!(hooked.is_empty());
     }
 
@@ -670,5 +808,61 @@ mod tests {
         assert_eq!(memory.configure(Keep(Set::SessionRoot(session_root.clone()))), Answer::Succeeded);
         assert_eq!(memory.unwitnessed(), None);
         assert_eq!(memory.discover_process().and_then(|discover| discover.session_root_option), Some(session_root));
+    }
+
+    #[test]
+    fn an_ended_session_is_forgotten_once_its_retention_has_passed() {
+        let mut memory = memory("retired");
+        observe_at(&mut memory, vec![Event::PromptSubmitted, Event::TurnEnded, Event::Ended(EndReason::Died)], 120, 10);
+        assert_eq!(memory.retire(&at(1000)), Vec::<FlowId>::new(), "with no retention configured, an ended session is kept");
+        assert_eq!(memory.due(), None);
+
+        assert_eq!(memory.configure(Keep(Set::EndedRetention(EndedRetention(30)))), Answer::Succeeded);
+        assert_eq!(memory.due(), Some(at(40)));
+        assert_eq!(memory.retire(&at(39)), Vec::<FlowId>::new());
+        assert!(subscribed(&memory).is_some());
+
+        assert_eq!(memory.retire(&at(40)), vec![FlowId(FLOW.into())]);
+        assert_eq!(subscribed(&memory), None, "Subscribed no longer carries it");
+        assert!(!memory.holds_watch(&FlowId(FLOW.into())), "its Watch is forgotten, and its follow with it");
+        assert!(memory.records.ended_since_vector.is_empty());
+        assert_eq!(memory.due(), None);
+    }
+
+    #[test]
+    fn an_ended_session_whose_transcript_grows_is_retained_from_then() {
+        let mut memory = memory("grown");
+        assert_eq!(memory.configure(Keep(Set::EndedRetention(EndedRetention(30)))), Answer::Succeeded);
+        observe_at(&mut memory, vec![Event::Ended(EndReason::Died)], 100, 0);
+        observe_at(&mut memory, vec![], 180, 20);
+        assert_eq!(memory.due(), Some(at(50)));
+        assert_eq!(memory.retire(&at(30)), Vec::<FlowId>::new());
+        observe_at(&mut memory, vec![], 180, 25);
+        assert_eq!(memory.due(), Some(at(50)), "an outcome with the transcript not grown counts nothing");
+        observe_at(&mut memory, vec![Event::PromptSubmitted], 240, 40);
+        assert_eq!(memory.due(), None, "a session working again is not retained");
+        assert_eq!(memory.retire(&at(1000)), Vec::<FlowId>::new());
+    }
+
+    #[test]
+    fn a_session_resumed_after_it_is_forgotten_is_followed_again_and_works() {
+        let mut memory = memory("found");
+        assert_eq!(memory.configure(Keep(Set::EndedRetention(EndedRetention(1)))), Answer::Succeeded);
+        observe_at(&mut memory, vec![Event::Ended(EndReason::Died)], 100, 0);
+        assert_eq!(memory.retire(&at(1)), vec![FlowId(FLOW.into())]);
+        assert_eq!(observe_at(&mut memory, vec![Event::PromptSubmitted], 200, 2), vec![], "what a forgotten Watch observes is not applied");
+
+        let found = Watch { flow_id: FlowId(FLOW.into()), file_path: FilePath(format!("/t/{FLOW}.jsonl")), read_from: ReadFrom::Offset(Offset(0)) };
+        assert_eq!(memory.watch(found), Answer::Succeeded, "discovered again, it is watched afresh");
+        let Some(Process::Watch(watch)) = memory.process_of(&memory.records.watch_vector[0].clone()) else { panic!("a Watch's process") };
+        assert_eq!(watch.read_from, ReadFrom::Offset(Offset(0)));
+        assert_eq!(observe_at(&mut memory, vec![Event::PromptSubmitted], 200, 3), vec![changed(Event::PromptSubmitted, State::Flowing(Flow::Working))]);
+        assert_eq!(subscribed(&memory).map(|observed| observed.state.clone()), Some(State::Flowing(Flow::Working)));
+    }
+
+    #[test]
+    fn the_retention_is_reported_at_the_start() {
+        assert_eq!(Retained(None).to_string(), "EndedRetention: none configured; every ended session is kept");
+        assert_eq!(Retained(Some(EndedRetention(30))).to_string(), "EndedRetention: an ended session is forgotten 30 minutes after its end, its transcript not grown");
     }
 }

@@ -46,6 +46,15 @@ ethos-zero 'Generate.{ [ «ethos/signal.ethos» «ethos/meta.ethos» «ethos/emi
 - The Memory keeps an ended session's Observed, Ended, and its Watch; a second Ended is no
   change, as a second TurnEnded is not, so a SessionEnd hook after the witness's end, or the
   witness's after the hook's, is dropped. A resume's turn-start row brings it to Working.
+- meta.ethos's EndedRetention holds the minutes an ended session is kept, set as
+  `Configure.EndedRetention.30`. The Memory keeps, beside each ended session, the moment it
+  ended, moved on each time its transcript grows while it stays Ended. Once the retention has
+  passed from that moment the session is forgotten: its Observed and its Watch leave the
+  Memory, the Watch's process ends Forgotten, its follow released, and Subscribed no longer
+  carries it. One timer is set, for the earliest moment due; it fires on time, and each
+  firing sets the next. Unconfigured, every ended session is kept, as the Nexus reports on
+  its stderr at its start. The moment is the Nexus's own record (main.rs `EndedSince`), not a
+  Memory record of memory.ethos: it is no change any process gives.
 - memory.ethos has the Memory's five sections: its records, Watch, Observed and Keep; its
   changes, Observe and Recall; their answers, Observation and Recollection, by place. Keep is
   a record, so what returns for it is the process library's plain Answer.
