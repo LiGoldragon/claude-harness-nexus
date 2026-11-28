@@ -22,7 +22,10 @@ ethos-zero 'Generate.{ [ «ethos/signal.ethos» «ethos/meta.ethos» «ethos/emi
   observed. Discover is lasting, as Follow is: a Discovered for each session that appears
   under the root. A Discover given a SessionRoot reports at its start the transcript of each
   session a live Claude process holds, as the sessions directory records it, so a session
-  made or resumed while no discovery ran is watched too; the Discover is born with the
+  made or resumed while no discovery ran is watched too; while it runs it watches the
+  sessions directory, and a live process's record that comes to name a session it did not
+  reports that session's transcript again, though it was reported before, so a resume of a
+  session its Nexus has forgotten is followed afresh; the Discover is born with the
   SessionRoot configured, and one configured anew bears it again. A TranscriptRoot configured
   with no SessionRoot is accepted, and reported on the Nexus's stderr as each discovery is
   born (TranscriptRootWithoutSessionRoot): its sessions are told Ended only by a hook. A Follow given a SessionRoot witnesses the session its transcript is named
@@ -51,7 +54,7 @@ ethos-zero 'Generate.{ [ «ethos/signal.ethos» «ethos/meta.ethos» «ethos/emi
   ended, moved on each time its transcript grows while it stays Ended. Once the retention has
   passed from that moment the session is forgotten: its Observed and its Watch leave the
   Memory, the Watch's process ends Forgotten, its follow released, and Subscribed no longer
-  carries it. One timer is set, for the earliest moment due; it fires on time, and each
+  carries it; a resume of it is discovered again, or named again by its SessionStart. One timer is set, for the earliest moment due; it fires on time, and each
   firing sets the next. Unconfigured, every ended session is kept, as the Nexus reports on
   its stderr at its start. The moment is the Nexus's own record (main.rs `EndedSince`), not a
   Memory record of memory.ethos: it is no change any process gives.

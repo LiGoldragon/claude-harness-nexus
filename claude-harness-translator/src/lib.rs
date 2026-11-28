@@ -357,20 +357,6 @@ impl Recorded {
     fn alive(&self) -> bool {
         ProcessStart::of(self.process_id) == Some(self.process_start)
     }
-
-    /// Each session a live Claude process holds, as a sessions directory
-    /// records them; a record that cannot be read is passed over.
-    fn held(directory: &Path) -> BTreeSet<SessionId> {
-        let Ok(entries) = std::fs::read_dir(directory) else { return BTreeSet::new() };
-        entries
-            .flatten()
-            .map(|entry| entry.path())
-            .filter(|path| Sessions::recording(path))
-            .filter_map(|path| Recorded::read(&path))
-            .filter(Recorded::alive)
-            .map(|recorded| recorded.session_id)
-            .collect()
-    }
 }
 
 /// Claude's sessions directory, read once for every follow it witnesses: each
@@ -613,22 +599,30 @@ fn session(path: &Path) -> Option<SessionId> {
 }
 
 /// What one discovery holds: the root's watch, once the root exists; each
-/// project directory's, by its watch; and each transcript reported.
+/// project directory's, by its watch; each transcript reported; and, given a
+/// sessions directory, its watch and the session each live process's record
+/// names, so a session a process comes to hold, made or resumed, is reported
+/// as it does.
 struct Discovery {
     stream: UnixStream,
-    session_root: Option<PathBuf>,
     root: Appearing,
     root_watch: Option<i32>,
     projects: BTreeMap<i32, PathBuf>,
     reported: BTreeSet<PathBuf>,
+    sessions: Option<Appearing>,
+    sessions_watch: Option<i32>,
+    named: BTreeMap<PathBuf, SessionId>,
 }
 
 impl Discovery {
     const WATCHED: inotify::WatchFlags = inotify::WatchFlags::CREATE.union(inotify::WatchFlags::MOVED_TO).union(inotify::WatchFlags::ONLYDIR);
 
     fn new(stream: UnixStream, discover: Discover_Data, key: u64, watches: &mut Watches) -> io::Result<Discovery> {
-        let session_root = discover.session_root_option.map(|session_root| PathBuf::from(session_root.0.0));
-        let mut discovery = Discovery { stream, session_root, root: Appearing::new(PathBuf::from(&discover.file_path.0)), root_watch: None, projects: BTreeMap::new(), reported: BTreeSet::new() };
+        let sessions = discover.session_root_option.map(|session_root| Appearing::new(PathBuf::from(session_root.0.0)));
+        let mut discovery = Discovery { stream, root: Appearing::new(PathBuf::from(&discover.file_path.0)), root_watch: None, projects: BTreeMap::new(), reported: BTreeSet::new(), sessions, sessions_watch: None, named: BTreeMap::new() };
+        if let Some(sessions) = discovery.sessions.as_mut() {
+            discovery.sessions_watch = sessions.watch(watches, Sessions::WATCHED, Watcher::Discovery(key))?;
+        }
         discovery.root_watch = discovery.root.watch(watches, Discovery::WATCHED, Watcher::Discovery(key))?;
         if discovery.root_watch.is_some() {
             discovery.began(watches, key);
@@ -660,17 +654,33 @@ impl Discovery {
 
     /// At the start, the transcript of each session a live Claude process holds
     /// is reported: it may have been made, or resumed, while no discovery ran.
-    /// What is looked at is bounded: each live session in each project directory.
+    /// What is looked at is bounded: each live session in each project
+    /// directory. After an overflowed queue, a session a record has come to
+    /// name since it was last read is reported again, as `renamed` does.
     fn held(&mut self) -> io::Result<()> {
-        let Some(session_root) = &self.session_root else { return Ok(()) };
-        let held = Recorded::held(session_root);
+        let Some(sessions) = &self.sessions else { return Ok(()) };
+        let Ok(entries) = std::fs::read_dir(&sessions.path) else { return Ok(()) };
+        let named: BTreeMap<PathBuf, SessionId> = entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| Sessions::recording(path))
+            .filter_map(|path| Recorded::read(&path).filter(Recorded::alive).map(|recorded| (path, recorded.session_id)))
+            .collect();
+        let renamed: BTreeSet<SessionId> = named.iter().filter(|(path, session_id)| self.named.get(*path) != Some(session_id)).map(|(_, session_id)| session_id.clone()).collect();
+        let held: BTreeSet<SessionId> = named.values().cloned().collect();
+        self.named = named;
         if held.is_empty() {
             return Ok(());
         }
         for project in self.directories() {
             for session_id in &held {
                 let path = project.join(format!("{}.jsonl", session_id.0));
-                if path.is_file() {
+                if !path.is_file() {
+                    continue;
+                }
+                if renamed.contains(session_id) {
+                    self.announce(path)?;
+                } else {
                     self.report(path)?;
                 }
             }
@@ -709,13 +719,80 @@ impl Discovery {
         Ok(())
     }
 
-    /// A session's transcript is reported once.
+    /// A session's transcript is reported once, as it appears.
     fn report(&mut self, path: PathBuf) -> io::Result<()> {
+        if !self.reported.contains(&path) {
+            self.announce(path)?;
+        }
+        Ok(())
+    }
+
+    /// A session's transcript reported, whether or not it was before.
+    fn announce(&mut self, path: PathBuf) -> io::Result<()> {
         let Some(session_id) = session(&path) else { return Ok(()) };
-        if !self.reported.insert(path.clone()) {
+        self.reported.insert(path.clone());
+        Discovered_Data { session_id, file_path: FilePath(path.to_string_lossy().into_owned()) }.write_to(&mut self.stream)
+    }
+
+    /// A record written: when a live process's record comes to name a session
+    /// it did not, that session's transcript is reported again, though it was
+    /// before: a process resumed it, and its Nexus may have forgotten it. A
+    /// record rewritten naming the same session reports nothing; a transcript
+    /// not yet made is reported as it appears.
+    fn renamed(&mut self, path: PathBuf) -> io::Result<()> {
+        if !Sessions::recording(&path) {
             return Ok(());
         }
-        Discovered_Data { session_id, file_path: FilePath(path.to_string_lossy().into_owned()) }.write_to(&mut self.stream)
+        let Some(recorded) = Recorded::read(&path).filter(Recorded::alive) else {
+            self.named.remove(&path);
+            return Ok(());
+        };
+        if self.named.get(&path) == Some(&recorded.session_id) {
+            return Ok(());
+        }
+        self.named.insert(path, recorded.session_id.clone());
+        for project in self.directories() {
+            let transcript = project.join(format!("{}.jsonl", recorded.session_id.0));
+            if transcript.is_file() {
+                self.announce(transcript)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// One event of the sessions directory's watches, true when it was the
+    /// directory's own and so the discovery's root has nothing to do with it.
+    /// The directory waited for, any event tries it again; once it is watched
+    /// each record in it is regarded, as if written.
+    fn sessions_seen(&mut self, watches: &mut Watches, key: u64, watch: i32, seen: inotify::ReadFlags, name: Option<&OsStr>) -> io::Result<bool> {
+        let Some(sessions) = self.sessions.as_mut() else { return Ok(false) };
+        if seen.contains(inotify::ReadFlags::IGNORED) {
+            sessions.lost(watch);
+            if self.sessions_watch == Some(watch) {
+                self.sessions_watch = None;
+                self.named.clear();
+            }
+        }
+        if self.sessions_watch.is_none() {
+            self.sessions_watch = sessions.watch(watches, Sessions::WATCHED, Watcher::Discovery(key))?;
+            if self.sessions_watch.is_some() {
+                let records: Vec<PathBuf> = std::fs::read_dir(&sessions.path).map(|entries| entries.flatten().map(|entry| entry.path()).collect()).unwrap_or_default();
+                for record in records {
+                    self.renamed(record)?;
+                }
+            }
+            return Ok(false);
+        }
+        if self.sessions_watch != Some(watch) {
+            return Ok(false);
+        }
+        let Some(path) = name.map(|name| sessions.path.join(name)) else { return Ok(true) };
+        if seen.intersects(inotify::ReadFlags::DELETE | inotify::ReadFlags::MOVED_FROM) {
+            self.named.remove(&path);
+        } else if seen.intersects(inotify::ReadFlags::CLOSE_WRITE | inotify::ReadFlags::MOVED_TO) {
+            self.renamed(path)?;
+        }
+        Ok(true)
     }
 
     /// The root as the discovery begins: each project directory in it is
@@ -740,6 +817,9 @@ impl Discovery {
     /// project directories gone with it, and what is in it when it is made
     /// again is new; a project directory deleted is let go.
     fn seen(&mut self, watches: &mut Watches, key: u64, watch: i32, seen: inotify::ReadFlags, name: Option<&OsStr>) -> io::Result<()> {
+        if self.sessions_seen(watches, key, watch, seen, name)? {
+            return Ok(());
+        }
         if seen.contains(inotify::ReadFlags::IGNORED) {
             self.root.lost(watch);
             self.projects.remove(&watch);
@@ -771,6 +851,12 @@ impl Discovery {
     fn release(&mut self, watches: &mut Watches, key: u64) {
         self.root.release(watches, Watcher::Discovery(key));
         if let Some(watch) = self.root_watch.take() {
+            watches.remove(watch, Watcher::Discovery(key));
+        }
+        if let Some(sessions) = self.sessions.as_mut() {
+            sessions.release(watches, Watcher::Discovery(key));
+        }
+        if let Some(watch) = self.sessions_watch.take() {
             watches.remove(watch, Watcher::Discovery(key));
         }
         for watch in std::mem::take(&mut self.projects).into_keys() {

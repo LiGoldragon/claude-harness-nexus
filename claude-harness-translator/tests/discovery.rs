@@ -179,3 +179,52 @@ fn a_root_deleted_and_made_again_is_discovered_again() {
     assert!(discovering.join().expect("the discovery").is_ok());
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// A session a live process comes to hold while the discovery runs, made
+/// before or resumed, is reported as its record comes to name it, though it
+/// was reported before: its Nexus may have forgotten it. A record rewritten
+/// naming the same session reports nothing.
+#[test]
+fn a_session_a_process_comes_to_hold_is_discovered_again() {
+    let base = std::env::temp_dir().join(format!("claude-harness-discovery-resumed-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let root = base.join("projects");
+    let sessions = base.join("sessions");
+    let project = root.join("-home-li-primary");
+    std::fs::create_dir_all(&sessions).expect("the sessions directory");
+    let old = project.join(format!("{OLD_PROJECT}.jsonl"));
+    write(&old);
+
+    let (nexus, translator) = UnixStream::pair().expect("a pair");
+    let discovering = {
+        let root = FilePath(root.to_string_lossy().into_owned());
+        let session_root = SessionRoot(FilePath(sessions.to_string_lossy().into_owned()));
+        std::thread::spawn(move || discover(translator, Discover_Data { file_path: root, session_root_option: Some(session_root) }))
+    };
+    let mut reading = nexus.try_clone().expect("a reader");
+    reading.set_read_timeout(Some(Duration::from_millis(1000))).expect("a timeout");
+    assert!(!matches!(Discovered_Data::read_from(&mut reading), Ok(Some(_))), "a transcript no live process holds at the start is not reported");
+
+    let fresh = project.join(format!("{NEW_PROJECT}.jsonl"));
+    write(&fresh);
+    assert_eq!(Discovered_Data::read_from(&mut reading).expect("a discovery"), Some(discovered(&fresh, NEW_PROJECT)));
+
+    let mut claude = std::process::Command::new("sleep").arg("60").spawn().expect("a sleep");
+    let record = |session: &str, status: &str| {
+        let record = format!(r#"{{"pid":{},"sessionId":"{session}","procStart":"{}","status":"{status}"}}"#, claude.id(), started(claude.id()));
+        std::fs::write(sessions.join(format!("{}.json", claude.id())), record).expect("the record");
+    };
+    record(OLD_PROJECT, "busy");
+    assert_eq!(Discovered_Data::read_from(&mut reading).expect("a discovery"), Some(discovered(&old, OLD_PROJECT)), "a resumed session is reported");
+    record(OLD_PROJECT, "idle");
+    assert!(!matches!(Discovered_Data::read_from(&mut reading), Ok(Some(_))), "a record rewritten naming the same session reports nothing");
+    record(NEW_PROJECT, "busy");
+    assert_eq!(Discovered_Data::read_from(&mut reading).expect("a discovery"), Some(discovered(&fresh, NEW_PROJECT)), "reported again, though it was before");
+
+    let _ = claude.kill();
+    let _ = claude.wait();
+    drop(reading);
+    drop(nexus);
+    assert!(discovering.join().expect("the discovery").is_ok());
+    let _ = std::fs::remove_dir_all(&base);
+}
