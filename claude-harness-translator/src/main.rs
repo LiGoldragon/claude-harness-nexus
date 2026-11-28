@@ -1,7 +1,8 @@
 //! The translator, started with its Nexus's place: the text socket takes a
 //! datom typed at the CLI and writes back each output as a datom; the hook
 //! socket takes Claude Code's payloads, one at a time and in order; the
-//! emission socket takes each emission on its own connection.
+//! emission socket takes each emission on its own connection, and each lasting
+//! one, a follow or a discovery, runs in the one loop of Watching.
 
 use std::io::{Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -10,7 +11,7 @@ use std::thread;
 
 use claude_harness_process::*;
 use process::Caller;
-use claude_harness_translator::{Translatable, caller, discover, follow, install, itself};
+use claude_harness_translator::{Translatable, Watching, caller, install, itself};
 use datom_codec::Datomizable;
 use protos::{Protosizable, Textualizable};
 use rustix::event::{PollFd, PollFlags};
@@ -132,20 +133,24 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    let watching = match Watching::start() {
+        Ok(watching) => watching,
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::FAILURE;
+        }
+    };
     let emitting = place.clone();
     thread::spawn(move || {
         for mut stream in emissions.incoming().flatten() {
             let place = emitting.clone();
+            let watching = watching.clone();
             thread::spawn(move || match Emission::read_from(&mut stream) {
-                Ok(Some(Emission::Follow(emission))) => {
-                    let _ = follow(stream, emission);
-                }
+                Ok(Some(Emission::Follow(emission))) => watching.follow(stream, emission),
                 Ok(Some(Emission::Install(emission))) => {
                     let _ = install(&place, &emission).write_to(&mut stream);
                 }
-                Ok(Some(Emission::Discover(emission))) => {
-                    let _ = discover(stream, emission);
-                }
+                Ok(Some(Emission::Discover(emission))) => watching.discover(stream, emission),
                 _ => {}
             });
         }
