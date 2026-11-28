@@ -13,7 +13,7 @@ use std::thread;
 
 use claude_harness_process::*;
 use flow::FlowId;
-use harness::{Event, Observed, State, Tokens, Transitionable};
+use harness::{Event, FilePath, Observed, State, Tokens, Transitionable};
 use process::{Answer, Arrival, Caller, Ended, Gave, Given, Identity, Living, Moment, Ownable, Owner, ProcessId, ProcessManager, Roots, Trace, Traced, Tracing, Unobserved, Unremembered, UserId};
 use transport::{Framed, Place, Placed};
 
@@ -37,6 +37,7 @@ struct Records {
     hooks: Hooks,
     hook_client_option: Option<HookClient>,
     row_count_option: Option<RowCount>,
+    transcript_root_option: Option<FilePath>,
 }
 
 /// The memory process: one change at a time, each kept before it is answered.
@@ -49,7 +50,7 @@ impl MemoryProcess {
     /// A memory file that is there and cannot be read is not overwritten: the program does not start.
     fn open(place: &Place) -> std::io::Result<MemoryProcess> {
         let file = place.path(Placed::Memory(VERSION));
-        let empty = || Records { observed_vector: Vec::new(), watch_vector: Vec::new(), hooks: Hooks(Vec::new()), hook_client_option: None, row_count_option: None };
+        let empty = || Records { observed_vector: Vec::new(), watch_vector: Vec::new(), hooks: Hooks(Vec::new()), hook_client_option: None, row_count_option: None, transcript_root_option: None };
         let records = match File::open(&file) {
             Ok(opened) => Records::read_from(&mut BufReader::new(opened))?.unwrap_or_else(empty),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => empty(),
@@ -79,12 +80,19 @@ impl MemoryProcess {
         Some(Process::Watch(WatchProcess { flow_id: watch.flow_id.clone(), file_path: watch.file_path.clone(), read_from: watch.read_from.clone(), row_count }))
     }
 
-    /// A Watch of the same flow and file is kept as it is, with the offset read so far.
+    /// The discovery's process, when the transcript root it is born with is configured.
+    fn discover_process(&self) -> Option<Process> {
+        let file_path = self.records.transcript_root_option.clone()?;
+        Some(Process::Discover(DiscoverProcess { file_path }))
+    }
+
     /// A Prepare's process, with its caller, and the hook client and the hooks as configured now.
     fn prepare_process(&self, caller: Caller) -> Process {
         Process::Prepare(PrepareProcess { caller, hook_client_option: self.records.hook_client_option.clone(), hooks: self.records.hooks.clone() })
     }
 
+    /// A Watch of the same flow and file is kept as it is, with the offset read so
+    /// far: a session discovered and named again by its SessionStart is one Watch.
     fn watch(&mut self, watch: Watch) -> Answer {
         if self.records.watch_vector.iter().any(|held| held.flow_id == watch.flow_id && held.file_path == watch.file_path) {
             return Answer::Succeeded;
@@ -100,6 +108,7 @@ impl MemoryProcess {
             Set::RemoveHook(hook_name) => self.records.hooks.0.retain(|held| *held != hook_name),
             Set::HookClient(hook_client) => self.records.hook_client_option = Some(hook_client),
             Set::RowCount(row_count) => self.records.row_count_option = Some(row_count),
+            Set::TranscriptRoot(file_path) => self.records.transcript_root_option = Some(file_path),
         }
         self.keep()
     }
@@ -317,13 +326,15 @@ impl EmissionSocket {
         });
     }
 
-    fn follow(&mut self, identity: Identity, follow: Follow_Data, queue: Queue) {
-        let given = move |identity: &Identity, taken| Arrived::Arrival(Arrival::Given(Given { identity: identity.clone(), taken: Taken::Following(taken) }));
+    /// A lasting emission: each outcome read is given to its process as it
+    /// comes, until the connection ends, which is given as Unanswered.
+    fn last<O: Framed + Send + 'static>(&mut self, identity: Identity, emission: Emission, queue: Queue, taken: fn(Result<O, Unobserved>) -> Taken) {
+        let given = move |identity: &Identity, outcome| Arrived::Arrival(Arrival::Given(Given { identity: identity.clone(), taken: taken(outcome) }));
         let Ok(mut stream) = UnixStream::connect(self.place.path(Placed::EmissionSocket)) else {
             let _ = queue.send(given(&identity, Err(Unobserved::Unsubmitted)));
             return;
         };
-        if Emission::Follow(follow).write_to(&mut stream).is_err() {
+        if emission.write_to(&mut stream).is_err() {
             let _ = queue.send(given(&identity, Err(Unobserved::Unsubmitted)));
             return;
         }
@@ -334,9 +345,9 @@ impl EmissionSocket {
         self.lasting.insert(identity.clone(), stream);
         thread::spawn(move || {
             loop {
-                match Following_Data::read_from(&mut reading) {
-                    Ok(Some(following)) => {
-                        if queue.send(given(&identity, Ok(following))).is_err() {
+                match O::read_from(&mut reading) {
+                    Ok(Some(outcome)) => {
+                        if queue.send(given(&identity, Ok(outcome))).is_err() {
                             return;
                         }
                     }
@@ -366,6 +377,8 @@ struct World {
     roots: Arc<Roots>,
     /// Each Watch that has a living process, or one on its way to birth, by its flow.
     watching: BTreeMap<FlowId, Identity>,
+    /// The one discovery that has a living process, or one on its way to birth, and its root.
+    discovering: Option<(FilePath, Identity)>,
 }
 
 impl World {
@@ -396,6 +409,27 @@ impl World {
             }
             let _ = self.queue.send(Arrived::Arrival(Arrival::Born(Living { identity, process })));
         }
+    }
+
+    /// The discovery of the transcript root configured is given its process
+    /// where it has none: at the program's start, when the translator begins to
+    /// listen, and when the configuration is kept. A root replaced ends the
+    /// discovery of the old one.
+    fn bear_discovery(&mut self) {
+        let configured = self.memory.records.transcript_root_option.clone();
+        if let Some((root, identity)) = &self.discovering {
+            if Some(root) == configured.as_ref() {
+                return;
+            }
+            self.end(identity.clone(), Outcome::Discover(Discovering::Forgotten));
+            self.discovering = None;
+        }
+        let Some(process) = self.memory.discover_process() else { return };
+        let identity = self.roots.draw();
+        if let Process::Discover(discover) = &process {
+            self.discovering = Some((discover.file_path.clone(), identity.clone()));
+        }
+        let _ = self.queue.send(Arrived::Arrival(Arrival::Born(Living { identity, process })));
     }
 
     /// A Watch forgotten ends its process.
@@ -437,13 +471,15 @@ impl World {
                 let answer = self.memory.configure(keep);
                 self.give_back(identity, Taken::Answer(answer));
                 self.bear_watches();
+                self.bear_discovery();
             }
             Gift::Observe(observe) => {
                 let observation = self.memory.observe(observe);
                 self.give_back(identity, Taken::Observation(observation));
                 self.forget();
             }
-            Gift::Follow(follow) => self.emission.follow(identity, follow, self.queue.clone()),
+            Gift::Follow(follow) => self.emission.last(identity, Emission::Follow(follow), self.queue.clone(), Taken::Following),
+            Gift::Discover(discover) => self.emission.last(identity, Emission::Discover(discover), self.queue.clone(), Taken::Discovered),
         }
     }
 }
@@ -458,6 +494,9 @@ impl Tracing<Process> for World {
             Trace::Took(_) => {}
             Trace::Ended(ended) => {
                 self.watching.retain(|_, identity| *identity != ended.identity);
+                if self.discovering.as_ref().is_some_and(|(_, identity)| *identity == ended.identity) {
+                    self.discovering = None;
+                }
                 self.signal.close(&ended.identity);
                 self.emission.close(&ended.identity);
             }
@@ -495,14 +534,18 @@ fn main() -> ExitCode {
         }
     };
     let emission = EmissionSocket { place: place.clone(), lasting: BTreeMap::new() };
-    let mut world = World { signal, memory, emission, archive, queue, roots, watching: BTreeMap::new() };
+    let mut world = World { signal, memory, emission, archive, queue, roots, watching: BTreeMap::new(), discovering: None };
     world.trace(Trace::Started(now()));
     world.bear_watches();
+    world.bear_discovery();
     let mut manager = ProcessManager::default();
     for arrived in arrivals {
         match arrived {
             Arrived::Arrival(arrival) => manager.arrive(arrival, &mut world),
-            Arrived::Listening => world.bear_watches(),
+            Arrived::Listening => {
+                world.bear_watches();
+                world.bear_discovery();
+            }
             Arrived::Preparing(identity, caller) => {
                 let process = world.memory.prepare_process(caller);
                 manager.arrive(Arrival::Born(Living { identity, process }), &mut world)

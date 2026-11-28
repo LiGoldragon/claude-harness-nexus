@@ -7,6 +7,10 @@
 //! them (`Changed` below, and `Subscribed` and `Prepared` as the outputs given),
 //! which is what ethos-zero writes from the two contracts declared as Signals of
 //! this Nexus, its fixture nexus/claude-harness; every other line is its output.
+//! Discover is born of no call, record or process given, which ethos-zero
+//! refuses as Unborn.Discover: it is written as ethos-zero writes a process born
+//! of a record of the Memory holding its configured values, the Memory its owner,
+//! and is born by the World where a transcript root is configured.
 #![allow(
     dead_code,
     non_camel_case_types,
@@ -54,6 +58,13 @@ pub enum Preparing {
     Uninstalled,
     Unobserved,
     Unconfigured,
+}
+#[rustfmt::skip]
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "datom", derive(datom_codec::Datomizable, datom_codec::Composing))]
+pub enum Discovering {
+    Undiscovered,
+    Forgotten,
 }
 #[rustfmt::skip]
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
@@ -146,12 +157,31 @@ pub type PrepareTaken = core::result::Result<
 #[rustfmt::skip]
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "datom", derive(datom_codec::Datomizable, datom_codec::Composing))]
+pub struct DiscoverProcess {
+    pub file_path: harness::FilePath,
+}
+#[rustfmt::skip]
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "datom", derive(datom_codec::Datomizable, datom_codec::Composing))]
+pub enum DiscoverTaken {
+    Discovered(
+        core::result::Result<
+            claude_harness::emission::Discovered_Data,
+            process::Unobserved,
+        >,
+    ),
+    Answer(process::Answer),
+}
+#[rustfmt::skip]
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "datom", derive(datom_codec::Datomizable, datom_codec::Composing))]
 pub enum Process {
     Report(ReportProcess),
     Watch(WatchProcess),
     Subscribe(SubscribeProcess),
     Configure(ConfigureProcess),
     Prepare(PrepareProcess),
+    Discover(DiscoverProcess),
 }
 #[rustfmt::skip]
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
@@ -162,6 +192,7 @@ pub enum Outcome {
     Subscribe,
     Configure(Configuring),
     Prepare(Preparing),
+    Discover(Discovering),
     Unwound,
 }
 #[rustfmt::skip]
@@ -179,6 +210,7 @@ pub enum Gift {
     Configured(Configured),
     Install(claude_harness::emission::Install_Data),
     Prepared(Prepared),
+    Discover(claude_harness::emission::Discover_Data),
 }
 #[rustfmt::skip]
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
@@ -200,6 +232,12 @@ pub enum Taken {
     Installation(
         core::result::Result<
             claude_harness::emission::Installation_Data,
+            process::Unobserved,
+        >,
+    ),
+    Discovered(
+        core::result::Result<
+            claude_harness::emission::Discovered_Data,
             process::Unobserved,
         >,
     ),
@@ -327,6 +365,19 @@ impl core::convert::From<Prepared> for Gift {
     }
 }
 #[rustfmt::skip]
+impl process::Givable for claude_harness::emission::Discover_Data {
+    type Returned = core::result::Result<
+        claude_harness::emission::Discovered_Data,
+        process::Unobserved,
+    >;
+}
+#[rustfmt::skip]
+impl core::convert::From<claude_harness::emission::Discover_Data> for Gift {
+    fn from(gift: claude_harness::emission::Discover_Data) -> Gift {
+        Gift::Discover(gift)
+    }
+}
+#[rustfmt::skip]
 impl process::Unwindable for Outcome {
     fn unwound() -> Self {
         Outcome::Unwound
@@ -336,7 +387,7 @@ impl process::Unwindable for Outcome {
 impl process::Ownable for Process {
     fn owner(&self) -> process::Owner {
         match self {
-            Process::Watch(_) => process::Owner::Memory,
+            Process::Watch(_) | Process::Discover(_) => process::Owner::Memory,
             Process::Report(_)
             | Process::Subscribe(_)
             | Process::Configure(_)
@@ -369,6 +420,9 @@ impl process::Processable for Process {
             }
             Process::Prepare(prepare) => {
                 process::Processable::begin(prepare, giving).map(Outcome::Prepare)
+            }
+            Process::Discover(discover) => {
+                process::Processable::begin(discover, giving).map(Outcome::Discover)
             }
         }
     }
@@ -413,6 +467,22 @@ impl process::Processable for Process {
             (Process::Prepare(prepare), Taken::Installation(carried)) => {
                 process::Processable::take(prepare, carried, giving)
                     .map(Outcome::Prepare)
+            }
+            (Process::Discover(discover), Taken::Discovered(carried)) => {
+                process::Processable::take(
+                        discover,
+                        DiscoverTaken::Discovered(carried),
+                        giving,
+                    )
+                    .map(Outcome::Discover)
+            }
+            (Process::Discover(discover), Taken::Answer(carried)) => {
+                process::Processable::take(
+                        discover,
+                        DiscoverTaken::Answer(carried),
+                        giving,
+                    )
+                    .map(Outcome::Discover)
             }
             _ => core::option::Option::None,
         }

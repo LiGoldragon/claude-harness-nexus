@@ -10,7 +10,7 @@ use std::thread;
 
 use claude_harness_process::*;
 use process::Caller;
-use claude_harness_translator::{Translatable, caller, follow, install, itself};
+use claude_harness_translator::{Translatable, caller, discover, follow, install, itself};
 use datom_codec::Datomizable;
 use protos::{Protosizable, Textualizable};
 use rustix::event::{PollFd, PollFlags};
@@ -142,6 +142,9 @@ fn main() -> ExitCode {
                 }
                 Ok(Some(Emission::Install(emission))) => {
                     let _ = install(&place, &emission).write_to(&mut stream);
+                }
+                Ok(Some(Emission::Discover(emission))) => {
+                    let _ = discover(stream, emission);
                 }
                 _ => {}
             });

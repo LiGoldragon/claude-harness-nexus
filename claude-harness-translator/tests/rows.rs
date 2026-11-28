@@ -1,6 +1,7 @@
-//! The transcript rows Claude writes for an interruption and a compaction,
-//! as the harness evidence (flows/6fa457/harness-evidence/claude.md, 4a17 and
-//! 8hpf) records them, and how the translator reads them.
+//! The transcript rows Claude writes for an interruption, a compaction and a
+//! turn's end, as the harness evidence (flows/6fa457/harness-evidence/claude.md,
+//! 4a17 and 8hpf) and Claude 2.1.323's own transcripts record them, and how the
+//! translator reads them.
 
 use claude_harness_process::Row;
 use claude_harness_translator::Translatable;
@@ -48,4 +49,24 @@ fn a_compact_boundary_without_its_size_is_compacted_without_tokens() {
 fn a_compact_boundary_of_a_trigger_not_known_is_other() {
     let unknown = COMPACT_BOUNDARY.replace(r#""trigger":"manual""#, r#""trigger":"hook""#);
     assert_eq!(Row::translate(&unknown), Ok(Row::Other));
+}
+
+/// The system row Claude 2.1.323 writes as every turn of an interactive session ends.
+const TURN_DURATION: &str = r#"{"parentUuid":"c3b00c5c-9d92-4a79-a4dd-9254f20ce68b","isSidechain":false,"type":"system","subtype":"turn_duration","durationMs":1412,"messageCount":15,"timestamp":"2026-11-14T09:59:18.439Z","uuid":"ae334773-aa5c-4907-a829-e241ab572622","isMeta":false,"userType":"external","entrypoint":"cli","cwd":"/tmp/flow-testing/workspace-a","sessionId":"ba2d4c3e-d26c-53c4-b57d-375062952e2d","version":"2.1.323","gitBranch":"HEAD"}"#;
+
+#[test]
+fn a_turn_duration_row_ends_the_turn() {
+    assert_eq!(Row::translate(TURN_DURATION), Ok(Row::TurnEnded));
+}
+
+#[test]
+fn a_subagent_turn_duration_row_is_other() {
+    let sidechain = TURN_DURATION.replace(r#""isSidechain":false"#, r#""isSidechain":true"#);
+    assert_eq!(Row::translate(&sidechain), Ok(Row::Other));
+}
+
+#[test]
+fn a_stop_hook_summary_row_is_other() {
+    let summary = r#"{"parentUuid":"0b7f2a14-3c5e-4d0e-9f61-2a8c4e6d1b33","isSidechain":false,"type":"system","subtype":"stop_hook_summary","hookCount":1,"hookInfos":[{"command":"claude-harness-hook"}],"hookErrors":[],"preventedContinuation":false,"stopReason":"","hasOutput":false,"level":"suggestion","timestamp":"2026-11-21T04:50:02.101Z","uuid":"5d1e9c47-8a2b-4f36-b0c4-71e3a9f2d8e6","sessionId":"9c6908c4-5788-49e0-861c-eb98d9406fe3","version":"2.1.325"}"#;
+    assert_eq!(Row::translate(summary), Ok(Row::Other));
 }

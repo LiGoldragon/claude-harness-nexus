@@ -11,8 +11,11 @@ ethos-zero 'Generate.{ [ «ethos/signal.ethos» «ethos/meta.ethos» «ethos/emi
 - signal.ethos is the Nexus's own contract with its translator. Listening, in its inputs,
   is the library's input every Nexus has: its translator tells it that it has begun to
   listen, and it is answered at once by Acknowledged.
-- meta.ethos is the meta contract: Configure, answered by Configured.
-- emission.ethos is the Emission root: Follow and Install, and what the translator observed.
+- meta.ethos is the meta contract: Configure, answered by Configured. TranscriptRoot is the
+  directory Claude keeps its projects in, set as `Configure.TranscriptRoot.«/abs/path»`.
+- emission.ethos is the Emission root: Follow, Install and Discover, and what the translator
+  observed. Discover is lasting, as Follow is: a Discovered for each session that appears
+  under the root.
 - library.ethos holds what the roots share: Offset, ReadFrom and RowCount.
 - memory.ethos has the Memory's five sections: its records, Watch, Observed and Keep; its
   changes, Observe and Recall; their answers, Observation and Recollection, by place. Keep is
@@ -25,4 +28,7 @@ across crates, so the set with process.ethos is refused as `Foreign.Changed`.
 claude-harness-process/src/processes.rs is written by hand as ethos-zero writes it when the two
 contracts are declared as Signals of the Nexus (its fixture nexus/claude-harness), holding
 Changed, Subscribed and Prepared as the processes hold them. The memory imports Changed from
-that module.
+that module. Discover is born of no call, record or process given, which ethos-zero refuses
+as `Unborn.Discover`; it is written as ethos-zero writes a process born of a record of the
+Memory holding its configured values, owned by the Memory, and the World bears it where a
+transcript root is configured.

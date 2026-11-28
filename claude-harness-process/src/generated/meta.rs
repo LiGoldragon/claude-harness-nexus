@@ -27,6 +27,7 @@ pub enum Set {
     RemoveHook(HookName),
     HookClient(HookClient),
     RowCount(claude_harness::RowCount),
+    TranscriptRoot(harness::FilePath),
 }
 #[rustfmt::skip]
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
