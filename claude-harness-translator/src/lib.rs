@@ -290,11 +290,23 @@ impl Appearing {
 
 /// What Claude records of one of its running processes, in its sessions
 /// directory as `<pid>.json`: the process, the start the kernel gave it, and
-/// the session it runs now.
+/// the session it runs now, and when Claude last wrote the record.
 struct Recorded {
     process_id: ProcessId,
     process_start: ProcessStart,
     session_id: SessionId,
+    written: Written,
+}
+
+/// When a file was last written, as its modification time gives it.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+struct Written(std::time::SystemTime);
+
+impl Written {
+    /// None when the file cannot be read for it.
+    fn of(path: &Path) -> Option<Written> {
+        std::fs::metadata(path).and_then(|metadata| metadata.modified()).ok().map(Written)
+    }
 }
 
 /// A process's start, in clock ticks since the boot: what tells a process
@@ -327,7 +339,8 @@ impl Recorded {
             Value::Number(start) => start.as_u64()?,
             _ => return None,
         });
-        Some(Recorded { process_id, process_start, session_id: text(&value, "sessionId").map(SessionId).ok()? })
+        let written = Written::of(path)?;
+        Some(Recorded { process_id, process_start, session_id: text(&value, "sessionId").map(SessionId).ok()?, written })
     }
 
     /// The record a file holds, read for a sessions directory: one that cannot
@@ -453,63 +466,123 @@ impl Sessions {
     }
 }
 
+/// A live Claude process holding a session: its pidfd, and the start the
+/// kernel gave it, so a record of a later process given the same pid is not
+/// read as this one moving on.
+struct Holder {
+    pidfd: OwnedFd,
+    start: ProcessStart,
+}
+
+impl Holder {
+    /// The pidfd is opened before the start is checked: a process with that
+    /// start, there after the pidfd is open, is the one the pidfd holds.
+    fn of(recorded: &Recorded) -> Option<Holder> {
+        let pid = i32::try_from(recorded.process_id.0).ok().and_then(rustix::process::Pid::from_raw)?;
+        let pidfd = rustix::process::pidfd_open(pid, rustix::process::PidfdFlags::empty()).ok()?;
+        recorded.alive().then_some(Holder { pidfd, start: recorded.process_start })
+    }
+}
+
 /// Which live Claude processes hold one session, as its sessions directory
 /// records them: each process whose record names the session is held by a
 /// pidfd, once the start the record gives is the start the process with that
 /// pid has, so a pid the kernel has given again is not taken. A process is
-/// let go when its pidfd becomes readable, the process gone, or when its
-/// record names another session. The session has ended when no process holds
-/// it; that is told once, until a process holds it again.
+/// let go when its record names another session, a clear: the process lives
+/// on and has moved to that session; or when its pidfd becomes readable, the
+/// process gone. A pidfd is readable alike when a process exits and when it is
+/// killed, so a gone process cannot be told exited from dead, and is Died.
+/// The session has ended when no process holds it, told once, until a process
+/// holds it again, for how its last process left: Cleared or Died.
+///
+/// A /clear may write the new session's transcript before the process's
+/// record names it. A session no process has held yet therefore waits on each
+/// live process whose record was written no later than its transcript, since
+/// that record may yet be rewritten to name it; it is Died once each such
+/// process has rewritten its record, naming another session, or is gone.
 struct Witness {
     session_id: SessionId,
+    transcript: PathBuf,
     root: u64,
-    holders: BTreeMap<ProcessId, OwnedFd>,
+    holders: BTreeMap<ProcessId, Holder>,
+    /// Before any process held the session: the processes whose record may yet name it.
+    awaited: BTreeMap<ProcessId, Holder>,
+    /// A process held the session since its follow began.
+    held: bool,
+    /// How the last process to let the session go left it.
+    departure: EndReason,
     /// The directory not read: what it records is not known, so no end is told.
     unread: bool,
     told: bool,
 }
 
 impl Witness {
-    fn new(session_id: SessionId, root: u64) -> Witness {
-        Witness { session_id, root, holders: BTreeMap::new(), unread: false, told: false }
+    fn new(session_id: SessionId, transcript: PathBuf, root: u64) -> Witness {
+        Witness { session_id, transcript, root, holders: BTreeMap::new(), awaited: BTreeMap::new(), held: false, departure: EndReason::Died, unread: false, told: false }
     }
 
-    /// The directory's records, as they stand, taken in.
+    /// The directory's records, as they stand, taken in. A holder whose record
+    /// now names another session, with the start it was taken with, has cleared.
     fn regard(&mut self, sessions: &Sessions) {
         self.unread = !sessions.readable;
+        let transcript = Written::of(&self.transcript);
         for recorded in sessions.records.values() {
             if recorded.session_id == self.session_id {
                 self.take(recorded);
-            } else {
+                continue;
+            }
+            if self.holders.get(&recorded.process_id).is_some_and(|holder| holder.start == recorded.process_start) {
                 self.holders.remove(&recorded.process_id);
+                self.departure = EndReason::Cleared;
+            }
+            if self.held || transcript.is_none_or(|transcript| recorded.written > transcript) {
+                self.awaited.remove(&recorded.process_id);
+            } else if !self.awaited.contains_key(&recorded.process_id)
+                && let Some(awaited) = Holder::of(recorded)
+            {
+                self.awaited.insert(recorded.process_id, awaited);
             }
         }
     }
 
-    /// The pidfd is opened before the start is checked: a process with that
-    /// start, there after the pidfd is open, is the one the pidfd holds.
     fn take(&mut self, recorded: &Recorded) {
+        self.awaited.remove(&recorded.process_id);
         if self.holders.contains_key(&recorded.process_id) {
             return;
         }
-        let Some(pid) = i32::try_from(recorded.process_id.0).ok().and_then(rustix::process::Pid::from_raw) else { return };
-        let Ok(pidfd) = rustix::process::pidfd_open(pid, rustix::process::PidfdFlags::empty()) else { return };
-        if recorded.alive() {
-            self.holders.insert(recorded.process_id, pidfd);
+        if let Some(holder) = Holder::of(recorded) {
+            self.holders.insert(recorded.process_id, holder);
+            self.held = true;
+            self.awaited.clear();
+            self.departure = EndReason::Died;
         }
     }
 
-    /// The session's end, once, when the directory is watched and read whole and no process holds the session.
+    /// A process whose pidfd became readable is gone: if it held the session, it left it Died.
+    fn gone(&mut self, process_id: ProcessId) {
+        self.awaited.remove(&process_id);
+        if self.holders.remove(&process_id).is_some() {
+            self.departure = EndReason::Died;
+        }
+    }
+
+    /// Each process the witness holds a pidfd of, holding the session or awaited.
+    fn pidfds(&self) -> impl Iterator<Item = (ProcessId, &OwnedFd)> {
+        self.holders.iter().chain(&self.awaited).map(|(process_id, holder)| (*process_id, &holder.pidfd))
+    }
+
+    /// The session's end, once, when the directory is watched and read whole,
+    /// no process holds the session and none is awaited.
     fn ending(&mut self, watched: bool) -> Option<EndReason> {
         if !self.holders.is_empty() {
             self.told = false;
             return None;
         }
-        if !watched || self.unread || self.told {
+        if !watched || self.unread || self.told || !self.awaited.is_empty() {
             return None;
         }
         self.told = true;
-        Some(EndReason::Died)
+        Some(self.departure.clone())
     }
 }
 
@@ -771,7 +844,7 @@ impl Watched {
                     Polled::Discovery(key) => self.undiscover(key),
                     Polled::Holder(key, process_id) => {
                         if let Some(witness) = self.follows.get_mut(&key).and_then(|followed| followed.witness.as_mut()) {
-                            witness.holders.remove(&process_id);
+                            witness.gone(process_id);
                             touched.insert(key);
                         }
                     }
@@ -808,8 +881,8 @@ impl Watched {
         for (key, followed) in &self.follows {
             polled.push(Polled::Follow(*key));
             waiting.push(PollFd::new(&followed.stream, PollFlags::IN));
-            for (process_id, pidfd) in followed.witness.iter().flat_map(|witness| &witness.holders) {
-                polled.push(Polled::Holder(*key, *process_id));
+            for (process_id, pidfd) in followed.witness.iter().flat_map(Witness::pidfds) {
+                polled.push(Polled::Holder(*key, process_id));
                 waiting.push(PollFd::new(pidfd, PollFlags::IN));
             }
         }
@@ -878,7 +951,7 @@ impl Watched {
     fn followed(&mut self, key: u64, stream: UnixStream, follow: Follow_Data) -> io::Result<()> {
         let path = PathBuf::from(&follow.file_path.0);
         let mut witness = match (&follow.session_root_option, session(&path)) {
-            (Some(session_root), Some(session_id)) => Some(Witness::new(session_id, self.rooted(PathBuf::from(&session_root.0.0))?)),
+            (Some(session_root), Some(session_id)) => Some(Witness::new(session_id, path.clone(), self.rooted(PathBuf::from(&session_root.0.0))?)),
             _ => None,
         };
         if let Some(witness) = witness.as_mut()

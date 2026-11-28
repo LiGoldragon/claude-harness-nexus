@@ -340,7 +340,7 @@ rec {
       };
       "claude-harness-translator" = rec {
         crateName = "claude-harness-translator";
-        version = "0.2.0";
+        version = "0.3.0";
         edition = "2024";
         crateBin = [
           {

@@ -1,6 +1,7 @@
 //! The follow's witness of a session's processes: Claude's sessions directory
-//! names each live process and its session; the session ends, Died, when no
-//! process of the start recorded holds it.
+//! names each live process and its session; the session ends when no process
+//! of the start recorded holds it: Cleared when its last process's record now
+//! names another session, Died when its last process is gone.
 
 use std::io::Write;
 use std::os::unix::net::UnixStream;
@@ -37,11 +38,24 @@ impl Home {
     }
 
     fn transcript(&self) -> PathBuf {
-        self.base.join("projects").join("-tmp").join(format!("{SESSION}.jsonl"))
+        self.transcript_of(SESSION)
     }
 
-    /// Claude's record of a process, as it writes it: `<pid>.json`.
+    fn transcript_of(&self, session: &str) -> PathBuf {
+        self.base.join("projects").join("-tmp").join(format!("{session}.jsonl"))
+    }
+
+    /// A session's transcript made, as a /clear makes the new one, a tick after what was written before it.
+    fn begin(&self, session: &str) {
+        tick();
+        std::fs::write(self.transcript_of(session), "").expect("the transcript");
+    }
+
+    /// Claude's record of a process, as it writes it: `<pid>.json`, a tick
+    /// after what was written before it, so the two are not written at the
+    /// same moment of the file system's clock.
     fn record(&self, process_id: u32, session: &str, start: &str) {
+        tick();
         let record = format!(r#"{{"pid":{process_id},"sessionId":"{session}","cwd":"/tmp","procStart":"{start}","kind":"interactive","status":"busy"}}"#);
         std::fs::write(self.sessions().join(format!("{process_id}.json")), record).expect("the record");
     }
@@ -53,9 +67,13 @@ impl Home {
 
     /// The follow of the transcript, witnessed under the sessions directory.
     fn follow(&self) -> (UnixStream, JoinHandle<std::io::Result<()>>) {
+        self.follow_of(SESSION)
+    }
+
+    fn follow_of(&self, session: &str) -> (UnixStream, JoinHandle<std::io::Result<()>>) {
         let (nexus, translator) = UnixStream::pair().expect("a pair");
         let emission = Follow_Data {
-            file_path: FilePath(self.transcript().to_string_lossy().into_owned()),
+            file_path: FilePath(self.transcript_of(session).to_string_lossy().into_owned()),
             read_from: ReadFrom::Offset(Offset(0)),
             row_count: RowCount(64),
             session_root_option: Some(SessionRoot(FilePath(self.sessions().to_string_lossy().into_owned()))),
@@ -70,6 +88,11 @@ impl Drop for Home {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.base);
     }
+}
+
+/// Long enough that two files written either side of it have different modification times.
+fn tick() {
+    std::thread::sleep(Duration::from_millis(20));
 }
 
 /// A real process to stand as Claude's.
@@ -182,7 +205,7 @@ fn a_resumed_session_is_held_again_and_ends_again() {
 }
 
 #[test]
-fn a_process_that_moves_to_another_session_lets_this_one_go() {
+fn a_process_that_moves_to_another_session_has_cleared_this_one() {
     let home = Home::new("moved");
     let mut process = claude();
     let start = start_of(process.id());
@@ -190,10 +213,83 @@ fn a_process_that_moves_to_another_session_lets_this_one_go() {
     let (mut nexus, following) = home.follow();
     assert_eq!(next(&mut nexus), None);
 
+    home.begin(OTHER);
     home.record(process.id(), OTHER, &start);
-    assert_eq!(next(&mut nexus).map(|following| following.end_reason_option), Some(Some(EndReason::Died)));
+    assert_eq!(next(&mut nexus).map(|following| following.end_reason_option), Some(Some(EndReason::Cleared)));
     let _ = process.kill();
     let _ = process.wait();
+    end(home, nexus, following);
+}
+
+/// A /clear that writes the new transcript before the record names it: the new
+/// session is not told Died while the record still names the old one; once
+/// it is rewritten the old session is Cleared, the new one held, and Died
+/// only when the process is gone.
+#[test]
+fn a_new_transcript_before_its_record_is_rewritten_is_not_died() {
+    let home = Home::new("cleared");
+    let mut process = claude();
+    let start = start_of(process.id());
+    home.record(process.id(), SESSION, &start);
+    let (mut old, old_following) = home.follow();
+    assert_eq!(next(&mut old), None);
+
+    home.begin(OTHER);
+    let (mut new, new_following) = home.follow_of(OTHER);
+    assert_eq!(next(&mut new), None, "the record not yet rewritten tells no end of the new session");
+
+    home.record(process.id(), OTHER, &start);
+    assert_eq!(next(&mut old).map(|following| following.end_reason_option), Some(Some(EndReason::Cleared)));
+    assert_eq!(next(&mut new), None, "the new session is held");
+
+    process.kill().expect("the kill");
+    process.wait().expect("the reaping");
+    assert_eq!(next(&mut new).map(|following| following.end_reason_option), Some(Some(EndReason::Died)));
+    assert_eq!(next(&mut old), None, "the old session's end is told once");
+    drop(old);
+    assert!(old_following.join().expect("the follow").is_ok());
+    end(home, new, new_following);
+}
+
+/// The record rewritten before the new transcript is followed: the new
+/// session is held at once, the old one Cleared.
+#[test]
+fn a_record_rewritten_before_the_new_transcript_holds_it() {
+    let home = Home::new("rewritten");
+    let mut process = claude();
+    let start = start_of(process.id());
+    home.record(process.id(), SESSION, &start);
+    let (mut old, old_following) = home.follow();
+    assert_eq!(next(&mut old), None);
+
+    home.record(process.id(), OTHER, &start);
+    home.begin(OTHER);
+    assert_eq!(next(&mut old).map(|following| following.end_reason_option), Some(Some(EndReason::Cleared)));
+    let (mut new, new_following) = home.follow_of(OTHER);
+    assert_eq!(next(&mut new), None, "the new session is held");
+
+    process.kill().expect("the kill");
+    process.wait().expect("the reaping");
+    assert_eq!(next(&mut new).map(|following| following.end_reason_option), Some(Some(EndReason::Died)));
+    drop(old);
+    assert!(old_following.join().expect("the follow").is_ok());
+    end(home, new, new_following);
+}
+
+/// A session no process has held, awaiting a process whose record might yet
+/// name it: that process gone, its record left behind, the session is Died.
+#[test]
+fn an_awaited_process_gone_tells_the_unheld_session_died() {
+    let home = Home::new("awaited");
+    let mut process = claude();
+    home.record(process.id(), OTHER, &start_of(process.id()));
+    home.begin(SESSION);
+    let (mut nexus, following) = home.follow();
+    assert_eq!(next(&mut nexus), None, "a process whose record is older than the transcript is awaited");
+
+    process.kill().expect("the kill");
+    process.wait().expect("the reaping");
+    assert_eq!(next(&mut nexus).map(|following| following.end_reason_option), Some(Some(EndReason::Died)));
     end(home, nexus, following);
 }
 

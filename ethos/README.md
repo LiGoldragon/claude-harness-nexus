@@ -28,9 +28,14 @@ ethos-zero 'Generate.{ [ «ethos/signal.ethos» «ethos/meta.ethos» «ethos/emi
   born (TranscriptRootWithoutSessionRoot): its sessions are told Ended only by a hook. A Follow given a SessionRoot witnesses the session its transcript is named
   for: each process whose record names the session is held by a pidfd, taken only when the
   record's procStart is the start /proc gives that pid, so a pid given again is not taken.
-  When no live process holds the session, at the start or once the last pidfd is readable,
-  the Following carries `Some.Died` after every row read up to it, once until a process
-  holds the session again; the follow goes on, since a resume writes on in the same file.
+  When no live process holds the session, at the start or once the last holder has let it
+  go, the Following carries the session's end after every row read up to it, once until a
+  process holds the session again; the follow goes on, since a resume writes on in the same
+  file. A holder whose record comes to name another session has cleared it: `Some.Cleared`.
+  A holder whose pidfd is readable is gone: `Some.Died`, since a pidfd cannot tell an exit
+  from a death. A /clear may write the new transcript before the record names it, so a
+  session no process has held yet waits on each live process whose record was written no
+  later than its transcript, and is Died once each has rewritten its record or is gone.
   A record that cannot be read is reported and skipped, so it never holds back another
   session's end; a sessions directory not read, or deleted, holds every end back until it is
   read again.
