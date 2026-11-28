@@ -206,6 +206,12 @@ impl Watches {
         }
     }
 
+    /// A watch the kernel has dropped, its path deleted (IN_IGNORED): it is
+    /// forgotten, with nothing to remove.
+    fn lost(&mut self, watch: i32) {
+        self.watchers.remove(&watch);
+    }
+
     /// Each watcher a watch reports to, once.
     fn of(&self, watch: i32) -> Vec<Watcher> {
         let mut watchers = self.watchers.get(&watch).cloned().unwrap_or_default();
@@ -263,6 +269,14 @@ impl Appearing {
             self.release(watches, watcher);
             let ancestor = watches.add(&nearest, inotify::WatchFlags::CREATE | inotify::WatchFlags::MOVED_TO, watcher)?;
             self.ancestor = Some((nearest, ancestor));
+        }
+    }
+
+    /// An ancestor waited on that was deleted is forgotten, so the next watch
+    /// waits on the nearest that exists.
+    fn lost(&mut self, watch: i32) {
+        if self.ancestor.as_ref().is_some_and(|(_, ancestor)| *ancestor == watch) {
+            self.ancestor = None;
         }
     }
 
@@ -381,7 +395,19 @@ impl Sessions {
     /// What one event changed, true when a record may have: a record written
     /// or moved in is read again, one deleted or moved out is gone. An event
     /// off the directory's own watch, a directory waited for, looks again whole.
+    /// A directory deleted is not read until it exists again: what it records
+    /// is not known meanwhile, so no end is told.
     fn seen(&mut self, watches: &mut Watches, key: u64, watch: i32, seen: inotify::ReadFlags, name: Option<&OsStr>) -> io::Result<bool> {
+        if seen.contains(inotify::ReadFlags::IGNORED) {
+            self.directory.lost(watch);
+            if self.watch == Some(watch) {
+                self.watch = None;
+                self.readable = false;
+                self.records.clear();
+            }
+            self.look(watches, key)?;
+            return Ok(true);
+        }
         if self.watch != Some(watch) {
             self.look(watches, key)?;
             return Ok(true);
@@ -497,6 +523,7 @@ fn session(path: &Path) -> Option<SessionId> {
 /// project directory's, by its watch; and each transcript reported.
 struct Discovery {
     stream: UnixStream,
+    session_root: Option<PathBuf>,
     root: Appearing,
     root_watch: Option<i32>,
     projects: BTreeMap<i32, PathBuf>,
@@ -507,21 +534,42 @@ impl Discovery {
     const WATCHED: inotify::WatchFlags = inotify::WatchFlags::CREATE.union(inotify::WatchFlags::MOVED_TO).union(inotify::WatchFlags::ONLYDIR);
 
     fn new(stream: UnixStream, discover: Discover_Data, key: u64, watches: &mut Watches) -> io::Result<Discovery> {
-        let mut discovery = Discovery { stream, root: Appearing::new(PathBuf::from(&discover.file_path.0)), root_watch: None, projects: BTreeMap::new(), reported: BTreeSet::new() };
+        let session_root = discover.session_root_option.map(|session_root| PathBuf::from(session_root.0.0));
+        let mut discovery = Discovery { stream, session_root, root: Appearing::new(PathBuf::from(&discover.file_path.0)), root_watch: None, projects: BTreeMap::new(), reported: BTreeSet::new() };
         discovery.root_watch = discovery.root.watch(watches, Discovery::WATCHED, Watcher::Discovery(key))?;
         if discovery.root_watch.is_some() {
             discovery.rooted(watches, key, false)?;
-            if let Some(session_root) = &discover.session_root_option {
-                discovery.held(Path::new(&session_root.0.0))?;
-            }
+            discovery.held()?;
         }
         Ok(discovery)
+    }
+
+    /// After an overflowed queue: a root waited for is tried again; a project
+    /// directory not watched yet is new whole; and the transcripts of the
+    /// sessions a live process holds are reported. A transcript made in a
+    /// watched project directory while the queue overflowed, of no live
+    /// process, is not found.
+    fn rescan(&mut self, watches: &mut Watches, key: u64) -> io::Result<()> {
+        if self.root_watch.is_none() {
+            self.root_watch = self.root.watch(watches, Discovery::WATCHED, Watcher::Discovery(key))?;
+            if self.root_watch.is_some() {
+                self.rooted(watches, key, true)?;
+            }
+            return Ok(());
+        }
+        for project in self.directories() {
+            if !self.projects.values().any(|watched| *watched == project) {
+                self.appeared(watches, key, project)?;
+            }
+        }
+        self.held()
     }
 
     /// At the start, the transcript of each session a live Claude process holds
     /// is reported: it may have been made, or resumed, while no discovery ran.
     /// What is looked at is bounded: each live session in each project directory.
-    fn held(&mut self, session_root: &Path) -> io::Result<()> {
+    fn held(&mut self) -> io::Result<()> {
+        let Some(session_root) = &self.session_root else { return Ok(()) };
         let held = Recorded::held(session_root);
         if held.is_empty() {
             return Ok(());
@@ -591,8 +639,20 @@ impl Discovery {
     }
 
     /// One event of the discovery's watches. While the root is waited for,
-    /// any event tries it again.
+    /// any event tries it again. A root deleted is waited for again, its
+    /// project directories gone with it, and what is in it when it is made
+    /// again is new; a project directory deleted is let go.
     fn seen(&mut self, watches: &mut Watches, key: u64, watch: i32, seen: inotify::ReadFlags, name: Option<&OsStr>) -> io::Result<()> {
+        if seen.contains(inotify::ReadFlags::IGNORED) {
+            self.root.lost(watch);
+            self.projects.remove(&watch);
+            if self.root_watch == Some(watch) {
+                self.root_watch = None;
+                for project in std::mem::take(&mut self.projects).into_keys() {
+                    watches.remove(project, Watcher::Discovery(key));
+                }
+            }
+        }
         let Some(root_watch) = self.root_watch else {
             self.root_watch = self.root.watch(watches, Discovery::WATCHED, Watcher::Discovery(key))?;
             if self.root_watch.is_some() {
@@ -854,27 +914,26 @@ impl Watched {
     }
 
     /// The inotify instance read, each event given to whom its watch reports
-    /// to. An overflowed queue touches every follow and has every sessions
-    /// directory looked at again.
+    /// to. A watch the kernel dropped, its path deleted, is forgotten before
+    /// its IN_IGNORED is given, so each watcher waits for the path again.
     fn read(&mut self, buffer: &mut [MaybeUninit<u8>], touched: &mut BTreeSet<u64>, regarded: &mut BTreeSet<u64>) -> io::Result<()> {
         for (watch, seen, name) in self.watches.events(buffer)? {
             if seen.contains(inotify::ReadFlags::QUEUE_OVERFLOW) {
-                touched.extend(self.follows.keys().copied());
-                let roots: Vec<u64> = self.sessions.keys().copied().collect();
-                for root in roots {
-                    match self.sessions.get_mut(&root).map(|sessions| sessions.look(&mut self.watches, root)) {
-                        Some(Ok(())) => {
-                            regarded.insert(root);
-                        }
-                        Some(Err(_)) => self.unroot(root),
-                        None => {}
-                    }
-                }
+                self.overflowed(touched, regarded);
                 continue;
             }
-            for watcher in self.watches.of(watch) {
+            let watchers = self.watches.of(watch);
+            if seen.contains(inotify::ReadFlags::IGNORED) {
+                self.watches.lost(watch);
+            }
+            for watcher in watchers {
                 match watcher {
                     Watcher::Follow(key) => {
+                        if seen.contains(inotify::ReadFlags::IGNORED)
+                            && let Some(followed) = self.follows.get_mut(&key)
+                        {
+                            followed.transcript.lost(watch);
+                        }
                         touched.insert(key);
                     }
                     Watcher::Sessions(root) => match self.sessions.get_mut(&root).map(|sessions| sessions.seen(&mut self.watches, root, watch, seen, name.as_deref())) {
@@ -893,6 +952,30 @@ impl Watched {
             }
         }
         Ok(())
+    }
+
+    /// An overflowed queue (IN_Q_OVERFLOW) lost events: it is reported, every
+    /// follow is read again, every sessions directory looked at again whole
+    /// and every discovery rescanned.
+    fn overflowed(&mut self, touched: &mut BTreeSet<u64>, regarded: &mut BTreeSet<u64>) {
+        eprintln!("IN_Q_OVERFLOW: the inotify queue overflowed; every follow is read again, every sessions directory and every discovery rescanned");
+        touched.extend(self.follows.keys().copied());
+        let roots: Vec<u64> = self.sessions.keys().copied().collect();
+        for root in roots {
+            match self.sessions.get_mut(&root).map(|sessions| sessions.look(&mut self.watches, root)) {
+                Some(Ok(())) => {
+                    regarded.insert(root);
+                }
+                Some(Err(_)) => self.unroot(root),
+                None => {}
+            }
+        }
+        let keys: Vec<u64> = self.discoveries.keys().copied().collect();
+        for key in keys {
+            if let Some(Err(_)) = self.discoveries.get_mut(&key).map(|discovery| discovery.rescan(&mut self.watches, key)) {
+                self.undiscover(key);
+            }
+        }
     }
 
     /// A follow that cannot go on, its path with no ancestor or its Nexus gone, is let go.
@@ -1065,4 +1148,57 @@ pub fn call(text_socket: Placed) -> ExitCode {
         }
     }
     ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn start_of(process_id: u32) -> String {
+        started(process_id as i32).expect("its start")
+    }
+
+    /// An overflowed queue rescans the discovery: a project directory not
+    /// watched yet is reported whole, and a session a live process holds is
+    /// reported, though no event of either was read.
+    #[test]
+    fn an_overflowed_queue_rescans_every_discovery() {
+        let base = std::env::temp_dir().join(format!("claude-harness-overflow-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let root = base.join("projects");
+        let sessions = base.join("sessions");
+        let watched = root.join("-home-li-primary");
+        std::fs::create_dir_all(&watched).expect("the project");
+        std::fs::create_dir_all(&sessions).expect("the sessions directory");
+        let mut claude = std::process::Command::new("sleep").arg("60").spawn().expect("a sleep");
+
+        let (nexus, translator) = UnixStream::pair().expect("a pair");
+        nexus.set_read_timeout(Some(Duration::from_millis(500))).expect("a timeout");
+        let mut watching = Watched::new(None).expect("the loop");
+        let discover = Discover_Data { file_path: FilePath(root.to_string_lossy().into_owned()), session_root_option: Some(SessionRoot(FilePath(sessions.to_string_lossy().into_owned()))) };
+        watching.admit(Arrival::Discover(translator, discover));
+
+        let held = "1b2c3d4e-5f60-4718-8293-a4b5c6d7e8f9";
+        let fresh = "2c3d4e5f-6071-4829-93a4-b5c6d7e8f9a0";
+        let unheld = "3d4e5f60-7182-4930-a4b5-c6d7e8f9a0b1";
+        std::fs::write(watched.join(format!("{held}.jsonl")), "").expect("the held transcript");
+        std::fs::write(watched.join(format!("{unheld}.jsonl")), "").expect("an unheld transcript");
+        std::fs::create_dir_all(root.join("-tmp")).expect("a new project");
+        std::fs::write(root.join("-tmp").join(format!("{fresh}.jsonl")), "").expect("the new project's transcript");
+        let record = format!(r#"{{"pid":{},"sessionId":"{held}","procStart":"{}"}}"#, claude.id(), start_of(claude.id()));
+        std::fs::write(sessions.join(format!("{}.json", claude.id())), record).expect("the record");
+
+        watching.overflowed(&mut BTreeSet::new(), &mut BTreeSet::new());
+        let mut reading = &nexus;
+        let mut reported = BTreeSet::new();
+        while let Ok(Some(discovered)) = Discovered_Data::read_from(&mut reading) {
+            reported.insert(discovered.session_id.0);
+        }
+        assert_eq!(reported, [held.to_owned(), fresh.to_owned()].into_iter().collect());
+
+        let _ = claude.kill();
+        let _ = claude.wait();
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }

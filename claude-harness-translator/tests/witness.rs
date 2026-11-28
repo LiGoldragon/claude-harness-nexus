@@ -196,3 +196,27 @@ fn a_process_that_moves_to_another_session_lets_this_one_go() {
     let _ = process.wait();
     end(home, nexus, following);
 }
+
+#[test]
+fn a_sessions_directory_deleted_and_made_again_is_read_again() {
+    let home = Home::new("remade");
+    let mut first = claude();
+    home.record(first.id(), SESSION, &start_of(first.id()));
+    let (mut nexus, following) = home.follow();
+    assert_eq!(next(&mut nexus), None, "a held session is not ended");
+
+    std::fs::remove_dir_all(home.sessions()).expect("the sessions directory deleted");
+    std::thread::sleep(Duration::from_millis(300));
+    std::fs::create_dir_all(home.sessions()).expect("the sessions directory made again");
+    let mut second = claude();
+    home.record(second.id(), SESSION, &start_of(second.id()));
+    std::thread::sleep(Duration::from_millis(300));
+
+    first.kill().expect("the kill");
+    first.wait().expect("the reaping");
+    assert_eq!(next(&mut nexus), None, "the second process, recorded in the directory made again, holds the session");
+    second.kill().expect("the kill");
+    second.wait().expect("the reaping");
+    assert_eq!(next(&mut nexus).map(|following| following.end_reason_option), Some(Some(EndReason::Died)));
+    end(home, nexus, following);
+}

@@ -148,3 +148,34 @@ fn a_session_a_live_process_holds_at_the_start_is_discovered() {
     assert!(discovering.join().expect("the discovery").is_ok());
     let _ = std::fs::remove_dir_all(&base);
 }
+
+#[test]
+fn a_root_deleted_and_made_again_is_discovered_again() {
+    let base = std::env::temp_dir().join(format!("claude-harness-discovery-remade-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let root = base.join("projects");
+    std::fs::create_dir_all(root.join("-tmp")).expect("the root");
+
+    let (nexus, translator) = UnixStream::pair().expect("a pair");
+    let discovering = {
+        let root = FilePath(root.to_string_lossy().into_owned());
+        std::thread::spawn(move || discover(translator, Discover_Data { file_path: root, session_root_option: None }))
+    };
+    std::thread::sleep(Duration::from_millis(300));
+    std::fs::remove_dir_all(&root).expect("the root deleted");
+    std::thread::sleep(Duration::from_millis(300));
+    let session = root.join("-tmp").join(format!("{NEW_PROJECT}.jsonl"));
+    write(&session);
+
+    let mut reading = nexus.try_clone().expect("a reader");
+    reading.set_read_timeout(Some(Duration::from_millis(1500))).expect("a timeout");
+    assert_eq!(Discovered_Data::read_from(&mut reading).expect("a discovery"), Some(discovered(&session, NEW_PROJECT)));
+    let later = root.join("-tmp").join(format!("{OLD_PROJECT}.jsonl"));
+    write(&later);
+    assert_eq!(Discovered_Data::read_from(&mut reading).expect("a discovery"), Some(discovered(&later, OLD_PROJECT)));
+
+    drop(reading);
+    drop(nexus);
+    assert!(discovering.join().expect("the discovery").is_ok());
+    let _ = std::fs::remove_dir_all(&base);
+}
