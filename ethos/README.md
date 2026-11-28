@@ -20,7 +20,10 @@ ethos-zero 'Generate.{ [ «ethos/signal.ethos» «ethos/meta.ethos» «ethos/emi
   with it.
 - emission.ethos is the Emission root: Follow, Install and Discover, and what the translator
   observed. Discover is lasting, as Follow is: a Discovered for each session that appears
-  under the root. A Follow given a SessionRoot witnesses the session its transcript is named
+  under the root. A Discover given a SessionRoot reports at its start the transcript of each
+  session a live Claude process holds, as the sessions directory records it, so a session
+  made or resumed while no discovery ran is watched too; the Discover is born with the
+  SessionRoot configured, and one configured anew bears it again. A Follow given a SessionRoot witnesses the session its transcript is named
   for: each process whose record names the session is held by a pidfd, taken only when the
   record's procStart is the start /proc gives that pid, so a pid given again is not taken.
   When no live process holds the session, at the start or once the last pidfd is readable,

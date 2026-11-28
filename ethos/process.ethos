@@ -21,7 +21,7 @@ Process
   Prepare.{ [ Option<HookClient> Hooks ]
             [ Install Prepared ]
             Preparing }
-  Discover.{ [ FilePath ]
+  Discover.{ [ FilePath Option<SessionRoot> ]
              [ Discover Watch ]
              Discovering } ]
 [ Reporting.[ Observed Unremembered ]

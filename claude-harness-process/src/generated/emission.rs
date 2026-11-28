@@ -43,6 +43,7 @@ pub struct Install_Data {
 #[cfg_attr(feature = "datom", derive(datom_codec::Datomizable, datom_codec::Composing))]
 pub struct Discover_Data {
     pub file_path: harness::FilePath,
+    pub session_root_option: core::option::Option<claude_harness::SessionRoot>,
 }
 #[rustfmt::skip]
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]

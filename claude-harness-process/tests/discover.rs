@@ -16,7 +16,7 @@ impl Tracing<Process> for World {
 }
 
 fn discovery() -> Process {
-    Process::Discover(DiscoverProcess { file_path: FilePath("/home/li/.claude/projects".into()) })
+    Process::Discover(DiscoverProcess { file_path: FilePath("/home/li/.claude/projects".into()), session_root_option: Some(SessionRoot(FilePath("/home/li/.claude/sessions".into()))) })
 }
 
 #[test]
@@ -36,7 +36,7 @@ fn a_discovered_session_is_watched_from_its_first_row() {
         world.0,
         vec![
             Trace::Born(Living { identity: identity.clone(), process: discovery() }),
-            gave(Gift::Discover(Discover_Data { file_path: FilePath("/home/li/.claude/projects".into()) })),
+            gave(Gift::Discover(Discover_Data { file_path: FilePath("/home/li/.claude/projects".into()), session_root_option: Some(SessionRoot(FilePath("/home/li/.claude/sessions".into()))) })),
             Trace::Took(Given { identity: identity.clone(), taken: found }),
             gave(Gift::Watch(Watch { flow_id: FlowId("15c0ce".into()), file_path: transcript, read_from: ReadFrom::Offset(Offset(0)) })),
             Trace::Took(Given { identity: identity.clone(), taken: Taken::Answer(Answer::Succeeded) }),

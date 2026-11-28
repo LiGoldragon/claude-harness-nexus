@@ -86,10 +86,11 @@ impl MemoryProcess {
         Some(Process::Watch(WatchProcess { flow_id: watch.flow_id.clone(), file_path: watch.file_path.clone(), read_from: watch.read_from.clone(), row_count, session_root_option }))
     }
 
-    /// The discovery's process, when the transcript root it is born with is configured.
-    fn discover_process(&self) -> Option<Process> {
+    /// The discovery's process, when the transcript root it is born with is
+    /// configured, with the sessions directory configured, if one is.
+    fn discover_process(&self) -> Option<DiscoverProcess> {
         let file_path = self.records.transcript_root_option.clone()?;
-        Some(Process::Discover(DiscoverProcess { file_path }))
+        Some(DiscoverProcess { file_path, session_root_option: self.records.session_root_option.clone() })
     }
 
     /// A Prepare's process, with its caller, and the hook client and the hooks as configured now.
@@ -383,7 +384,7 @@ struct World {
     /// Each Watch that has a living process, or one on its way to birth, by its flow.
     watching: BTreeMap<FlowId, Identity>,
     /// The one discovery that has a living process, or one on its way to birth, and its root.
-    discovering: Option<(FilePath, Identity)>,
+    discovering: Option<(DiscoverProcess, Identity)>,
 }
 
 impl World {
@@ -418,23 +419,21 @@ impl World {
 
     /// The discovery of the transcript root configured is given its process
     /// where it has none: at the program's start, when the translator begins to
-    /// listen, and when the configuration is kept. A root replaced ends the
-    /// discovery of the old one.
+    /// listen, and when the configuration is kept. A root or sessions directory
+    /// replaced ends the discovery born with the old one.
     fn bear_discovery(&mut self) {
-        let configured = self.memory.records.transcript_root_option.clone();
-        if let Some((root, identity)) = &self.discovering {
-            if Some(root) == configured.as_ref() {
+        let configured = self.memory.discover_process();
+        if let Some((discover, identity)) = &self.discovering {
+            if Some(discover) == configured.as_ref() {
                 return;
             }
             self.end(identity.clone(), Outcome::Discover(Discovering::Forgotten));
             self.discovering = None;
         }
-        let Some(process) = self.memory.discover_process() else { return };
+        let Some(discover) = configured else { return };
         let identity = self.roots.draw();
-        if let Process::Discover(discover) = &process {
-            self.discovering = Some((discover.file_path.clone(), identity.clone()));
-        }
-        let _ = self.queue.send(Arrived::Arrival(Arrival::Born(Living { identity, process })));
+        self.discovering = Some((discover.clone(), identity.clone()));
+        let _ = self.queue.send(Arrived::Arrival(Arrival::Born(Living { identity, process: Process::Discover(discover) })));
     }
 
     /// A Watch forgotten ends its process.

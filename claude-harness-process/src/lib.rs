@@ -277,7 +277,7 @@ impl Processable for DiscoverProcess {
     type Outcome = Discovering;
 
     fn begin<N: Giving<Gift>>(&mut self, mut manager: N) -> Option<Discovering> {
-        manager.give(Discover_Data { file_path: self.file_path.clone() });
+        manager.give(Discover_Data { file_path: self.file_path.clone(), session_root_option: self.session_root_option.clone() });
         None
     }
 

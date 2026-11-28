@@ -4,7 +4,7 @@ Emission
   claude_harness:meta:[ Hooks HookClient ] ]
 [ Follow.{ FilePath ReadFrom RowCount Option<SessionRoot> }
   Install.{ HookClient Hooks }
-  Discover.{ FilePath } ]
+  Discover.{ FilePath Option<SessionRoot> } ]
 [ Following.{ Vector<Row> Offset Option<EndReason> }
   Installation.[ Installed.FilePath
                  Uninstalled.Integer ]

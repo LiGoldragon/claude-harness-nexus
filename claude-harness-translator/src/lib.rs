@@ -295,6 +295,25 @@ impl Recorded {
         };
         Some(Recorded { process_id, process_start, session_id: text(&value, "sessionId").ok()? })
     }
+
+    /// The process it records is the one alive with that pid now.
+    fn alive(&self) -> bool {
+        started(self.process_id).as_deref() == Some(self.process_start.as_str())
+    }
+
+    /// Each session a live Claude process holds, as a sessions directory
+    /// records them; a record that cannot be read is passed over.
+    fn held(directory: &Path) -> BTreeSet<String> {
+        let Ok(entries) = std::fs::read_dir(directory) else { return BTreeSet::new() };
+        entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| Sessions::recording(path))
+            .filter_map(|path| Recorded::read(&path))
+            .filter(Recorded::alive)
+            .map(|recorded| recorded.session_id)
+            .collect()
+    }
 }
 
 /// A process's start, in clock ticks since the boot, as /proc/<pid>/stat
@@ -492,8 +511,30 @@ impl Discovery {
         discovery.root_watch = discovery.root.watch(watches, Discovery::WATCHED, Watcher::Discovery(key))?;
         if discovery.root_watch.is_some() {
             discovery.rooted(watches, key, false)?;
+            if let Some(session_root) = &discover.session_root_option {
+                discovery.held(Path::new(&session_root.0.0))?;
+            }
         }
         Ok(discovery)
+    }
+
+    /// At the start, the transcript of each session a live Claude process holds
+    /// is reported: it may have been made, or resumed, while no discovery ran.
+    /// What is looked at is bounded: each live session in each project directory.
+    fn held(&mut self, session_root: &Path) -> io::Result<()> {
+        let held = Recorded::held(session_root);
+        if held.is_empty() {
+            return Ok(());
+        }
+        for project in self.directories() {
+            for session_id in &held {
+                let path = project.join(format!("{session_id}.jsonl"));
+                if path.is_file() {
+                    self.report(path)?;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Each directory directly under the root, as it is now.
@@ -954,8 +995,10 @@ pub fn follow(stream: UnixStream, follow: Follow_Data) -> io::Result<()> {
 /// root, as `<project directory>/<session id>.jsonl`, until the Nexus closes
 /// the connection. Every project directory directly under the root is watched,
 /// those there at the start and those created later. What is deeper, a
-/// subagent's transcript or a tool's result, is no session's; what is there
-/// when the discovery begins is not reported. A root that does not exist yet
+/// subagent's transcript or a tool's result, is no session's. Of what is there
+/// when the discovery begins, only the transcripts of the sessions a live
+/// Claude process holds, as the sessions directory given records them, are
+/// reported. A root that does not exist yet
 /// is waited for, as a transcript is. This runs the loop for the one
 /// discovery, until it ends, as `follow` does.
 pub fn discover(stream: UnixStream, discover: Discover_Data) -> io::Result<()> {

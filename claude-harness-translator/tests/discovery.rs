@@ -6,7 +6,7 @@ use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use claude_harness_process::{Discover_Data, Discovered_Data};
+use claude_harness_process::{Discover_Data, Discovered_Data, SessionRoot};
 use claude_harness_translator::discover;
 use harness::{FilePath, SessionId};
 use transport::Framed;
@@ -41,7 +41,7 @@ fn a_session_that_appears_is_discovered_and_nothing_else_is() {
     let (nexus, translator) = UnixStream::pair().expect("a pair");
     let discovering = {
         let root = FilePath(root.to_string_lossy().into_owned());
-        std::thread::spawn(move || discover(translator, Discover_Data { file_path: root }))
+        std::thread::spawn(move || discover(translator, Discover_Data { file_path: root, session_root_option: None }))
     };
     std::thread::sleep(Duration::from_millis(300));
 
@@ -85,7 +85,7 @@ fn a_root_not_yet_made_is_waited_for() {
     let (nexus, translator) = UnixStream::pair().expect("a pair");
     let discovering = {
         let root = FilePath(root.to_string_lossy().into_owned());
-        std::thread::spawn(move || discover(translator, Discover_Data { file_path: root }))
+        std::thread::spawn(move || discover(translator, Discover_Data { file_path: root, session_root_option: None }))
     };
     std::thread::sleep(Duration::from_millis(300));
 
@@ -96,6 +96,53 @@ fn a_root_not_yet_made_is_waited_for() {
     reading.set_read_timeout(Some(Duration::from_millis(1500))).expect("a timeout");
     assert_eq!(Discovered_Data::read_from(&mut reading).expect("a discovery"), Some(discovered(&session, NEW_PROJECT)));
 
+    drop(reading);
+    drop(nexus);
+    assert!(discovering.join().expect("the discovery").is_ok());
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// The start the kernel gave a process: the twenty-second field of its stat.
+fn started(process_id: u32) -> String {
+    let stat = std::fs::read_to_string(format!("/proc/{process_id}/stat")).expect("the stat");
+    stat.rsplit_once(") ").expect("the fields").1.split_whitespace().nth(19).expect("the start").to_owned()
+}
+
+#[test]
+fn a_session_a_live_process_holds_at_the_start_is_discovered() {
+    let base = std::env::temp_dir().join(format!("claude-harness-discovery-held-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let root = base.join("projects");
+    let sessions = base.join("sessions");
+    std::fs::create_dir_all(&sessions).expect("the sessions directory");
+    let project = root.join("-home-li-primary");
+    let held = project.join(format!("{AT_START}.jsonl"));
+    let ended = project.join(format!("{OLD_PROJECT}.jsonl"));
+    write(&held);
+    write(&ended);
+    let mut claude = std::process::Command::new("sleep").arg("60").spawn().expect("a sleep");
+    let record = |process_id: u32, session: &str, start: &str| {
+        let record = format!(r#"{{"pid":{process_id},"sessionId":"{session}","cwd":"/tmp","procStart":"{start}","kind":"interactive","status":"busy"}}"#);
+        std::fs::write(sessions.join(format!("{process_id}.json")), record).expect("the record");
+    };
+    record(claude.id(), AT_START, &started(claude.id()));
+    // A record whose pid is given again: its start is not the live process's.
+    record(std::process::id(), OLD_PROJECT, "1");
+    std::fs::write(sessions.join("unreadable.json"), "{").expect("an unreadable record");
+
+    let (nexus, translator) = UnixStream::pair().expect("a pair");
+    let discovering = {
+        let root = FilePath(root.to_string_lossy().into_owned());
+        let session_root = SessionRoot(FilePath(sessions.to_string_lossy().into_owned()));
+        std::thread::spawn(move || discover(translator, Discover_Data { file_path: root, session_root_option: Some(session_root) }))
+    };
+    let mut reading = nexus.try_clone().expect("a reader");
+    reading.set_read_timeout(Some(Duration::from_millis(1500))).expect("a timeout");
+    assert_eq!(Discovered_Data::read_from(&mut reading).expect("a discovery"), Some(discovered(&held, AT_START)));
+    assert!(!matches!(Discovered_Data::read_from(&mut reading), Ok(Some(_))), "only the held session is discovered");
+
+    let _ = claude.kill();
+    let _ = claude.wait();
     drop(reading);
     drop(nexus);
     assert!(discovering.join().expect("the discovery").is_ok());
